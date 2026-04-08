@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(git push -u origin claude/determined-volhard)",
-      "Bash(git add .)"
+      "Bash(git add .)",
+      "Bash(git add -A)"
     ]
   }
 }
