@@ -2,6 +2,7 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
+[![PyPI](https://img.shields.io/pypi/v/wisdomgraph)](https://pypi.org/project/wisdomgraph/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Neo4j](https://img.shields.io/badge/Neo4j-native-008CC1?logo=neo4j)](https://neo4j.com)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-skill-blueviolet)](https://claude.ai/code)
