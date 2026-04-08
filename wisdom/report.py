@@ -8,9 +8,14 @@ from pathlib import Path
 def render_report(session, project: str = "", out_dir: Path | None = None) -> str:
     """Query Neo4j and render WISDOM_REPORT.md. Returns the markdown string."""
     from .traverse import god_nodes
-    from .connect import status
 
-    stats = status(session.driver if hasattr(session, "driver") else _get_driver_from_session(session))
+    # Count nodes per tier inline (avoids needing the driver object)
+    stats: dict = {}
+    for label in ("Knowledge", "Experience", "Insight", "Wisdom", "Source"):
+        r = session.run(f"MATCH (n:{label}) RETURN count(n) AS c")
+        stats[label] = r.single()["c"]
+    edge_r = session.run("MATCH ()-[r]->() RETURN count(r) AS c")
+    stats["edges"] = edge_r.single()["c"]
 
     date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
@@ -124,8 +129,3 @@ def render_report(session, project: str = "", out_dir: Path | None = None) -> st
     return report
 
 
-def _get_driver_from_session(session):
-    """Extract driver from session for status() call."""
-    # neo4j-python-driver sessions have ._connection or similar
-    # We just return None and let status handle it gracefully
-    return None
