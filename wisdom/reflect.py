@@ -30,13 +30,12 @@ def find_experience_candidates(session, project: str | None = None) -> list[dict
     RETURN lbl, projects, ids
     """
     results = []
-    with session.begin_transaction() as tx:
-        for record in tx.run(query):
-            results.append({
-                "label": record["lbl"],
-                "projects": record["projects"],
-                "ids": record["ids"],
-            })
+    for record in session.run(query):
+        results.append({
+            "label": record["lbl"],
+            "projects": record["projects"],
+            "ids": record["ids"],
+        })
     return results
 
 
@@ -94,14 +93,13 @@ def find_insight_candidates(session) -> list[dict]:
     ORDER BY peer_count DESC
     """
     results = []
-    with session.begin_transaction() as tx:
-        for record in tx.run(query):
-            results.append({
-                "id": record["id"],
-                "label": record["label"],
-                "peer_count": record["peer_count"],
-                "source_count": record["source_count"] or 1,
-            })
+    for record in session.run(query):
+        results.append({
+            "id": record["id"],
+            "label": record["label"],
+            "peer_count": record["peer_count"],
+            "source_count": record["source_count"] or 1,
+        })
     return results
 
 
@@ -165,15 +163,14 @@ def find_wisdom_candidates(session) -> list[dict]:
     LIMIT 20
     """
     results = []
-    with session.begin_transaction() as tx:
-        for record in tx.run(query):
-            results.append({
-                "id": record["id"],
-                "label": record["label"],
-                "strength": record["strength"],
-                "count": record["count"],
-                "content": record["content"],
-            })
+    for record in session.run(query):
+        results.append({
+            "id": record["id"],
+            "label": record["label"],
+            "strength": record["strength"],
+            "count": record["count"],
+            "content": record["content"],
+        })
     return results
 
 
