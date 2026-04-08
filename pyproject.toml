@@ -7,7 +7,8 @@ name = "wisdomgraph"
 version = "0.1.0"
 description = "Accumulative Neo4j-native DIKW wisdom memory for AI coding assistants (Claude Code, OpenClaw)"
 readme = "README.md"
-license = { file = "LICENSE" }
+license = "MIT"
+license-files = ["LICENSE"]
 keywords = [
     "claude", "claude-code", "openclaw", "neo4j", "knowledge-graph",
     "graphrag", "dikw", "wisdom", "memory", "accumulative", "llm",
