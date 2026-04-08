@@ -294,9 +294,9 @@ def main() -> None:
             print(f"{i:2}. {n['label']} [{n.get('tier','?')}] — {n.get('degree',0)} edges")
 
     elif cmd == "export":
-        fmt = _get_arg("--cypher", None, flag=True)
-        json_fmt = _get_arg("--json", None, flag=True)
-        obsidian = _get_arg("--obsidian", None, flag=True)
+        fmt = _get_arg("--cypher", None, is_flag=True)
+        json_fmt = _get_arg("--json", None, is_flag=True)
+        obsidian = _get_arg("--obsidian", None, is_flag=True)
         out_dir = Path(_get_arg("--out", "wisdom-out"))
         from wisdom.connect import get_driver, ensure_schema
         from wisdom.export import export_cypher, export_json, export_obsidian
@@ -350,15 +350,15 @@ def main() -> None:
         sys.exit(1)
 
 
-def _get_arg(flag: str, default, flag: bool = False) -> str | bool | None:
+def _get_arg(name: str, default, is_flag: bool = False):
     """Parse a named arg from sys.argv."""
     args = sys.argv
-    if flag:
-        return flag in args
+    if is_flag:
+        return name in args
     for i, a in enumerate(args):
-        if a == flag and i + 1 < len(args):
+        if a == name and i + 1 < len(args):
             return args[i + 1]
-        if a.startswith(f"{flag}="):
+        if a.startswith(f"{name}="):
             return a.split("=", 1)[1]
     return default
 
