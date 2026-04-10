@@ -9,3 +9,7 @@ build/
 wisdom-out/
 .wisdom/
 *.tmp
+
+# Claude Code local session files — never commit
+.claude/settings.local.json
+.claude/worktrees/
