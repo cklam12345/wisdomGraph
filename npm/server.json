@@ -1,18 +1,18 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.cklam12345/wisdomgraph",
-  "description": "Neo4j-native DIKW memory for Claude Code \u2014 knowledge that compounds across sessions",
+  "description": "Neo4j-native DIKW memory for Claude Code — knowledge that compounds across sessions",
   "repository": {
     "url": "https://github.com/cklam12345/wisdomGraph",
     "source": "github",
     "subfolder": "npm"
   },
-  "version": "0.2.0",
+  "version": "0.2.1",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "wisdomgraph",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "transport": {
         "type": "stdio"
       },
