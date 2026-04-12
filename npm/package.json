@@ -1,0 +1,43 @@
+{
+  "name": "wisdomgraph",
+  "version": "0.2.0",
+  "mcpName": "io.github.cklam12345/wisdomgraph",
+  "description": "Accumulative Neo4j-native DIKW memory for Claude Code — permanent knowledge across sessions",
+  "main": "index.js",
+  "bin": {
+    "wisdomgraph": "./index.js"
+  },
+  "scripts": {
+    "test": "node test.js"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "claude",
+    "claude-code",
+    "memory",
+    "neo4j",
+    "knowledge-graph",
+    "dikw",
+    "wisdom",
+    "accumulative",
+    "agent-memory"
+  ],
+  "author": "cklam12345",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cklam12345/wisdomGraph.git"
+  },
+  "homepage": "https://github.com/cklam12345/wisdomGraph",
+  "bugs": {
+    "url": "https://github.com/cklam12345/wisdomGraph/issues"
+  },
+  "engines": {
+    "node": ">=16"
+  },
+  "files": [
+    "index.js",
+    "README.md"
+  ]
+}
