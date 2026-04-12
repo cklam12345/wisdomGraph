@@ -274,11 +274,6 @@ def test_ingest_single_file(tmp_path):
     py_file = tmp_path / "test_module.py"
     py_file.write_text("def hello():\n    return 'world'\n")
 
-    fake_extraction = {
-        "nodes": [{"id": "k:hello", "label": "hello", "tier": "knowledge"}],
-        "edges": [],
-    }
-
     def fake_driver():
         driver = MagicMock()
         ctx = MagicMock()
@@ -288,9 +283,7 @@ def test_ingest_single_file(tmp_path):
         return driver
 
     with patch("wisdom.mcp._get_driver", side_effect=fake_driver), \
-         patch("wisdom.classify.classify_file", return_value=fake_extraction), \
-         patch("wisdom.merge.merge_nodes", return_value=1), \
-         patch("wisdom.merge.merge_edges", return_value=0):
+         patch("wisdom.merge.merge_extraction", return_value={"nodes": 1, "edges": 0}):
 
         result = _handle_ingest({"source": str(py_file), "project": "test"})
 

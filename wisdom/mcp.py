@@ -257,8 +257,7 @@ def _handle_ingest(args: dict[str, Any]) -> _Result:
     except RuntimeError as exc:
         return _err(str(exc))
 
-    from .merge import merge_nodes, merge_edges
-    from .classify import classify_file
+    from .merge import merge_extraction
 
     total_nodes = 0
     total_edges = 0
@@ -266,11 +265,24 @@ def _handle_ingest(args: dict[str, Any]) -> _Result:
     with driver.session() as session:
         for fpath in files:
             try:
-                extraction = classify_file(fpath, project=project, tier=tier)
-                if extraction.get("nodes"):
-                    total_nodes += merge_nodes(session, extraction["nodes"])
-                if extraction.get("edges"):
-                    total_edges += merge_edges(session, extraction["edges"])
+                # Build a minimal extraction from file metadata
+                node_id = f"{tier}:{str(fpath).replace('/', '_')}"
+                extraction = {
+                    "nodes": [{
+                        "id": node_id,
+                        "label": fpath.name,
+                        "content": fpath.read_text(encoding="utf-8", errors="replace")[:500],
+                        "tier": tier,
+                        "source_file": str(fpath),
+                        "project": project,
+                        "confidence": 1.0,
+                        "confidence_tag": "INGESTED",
+                    }],
+                    "edges": [],
+                }
+                stats = merge_extraction(session, extraction, source_uri=str(fpath), project=project)
+                total_nodes += stats.get("nodes", 0)
+                total_edges += stats.get("edges", 0)
             except Exception:
                 continue
 
