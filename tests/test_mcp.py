@@ -77,11 +77,7 @@ def test_remember_writes_node():
 
     driver = _make_driver()
     with patch("wisdom.mcp._get_driver", return_value=driver), \
-         patch("wisdom.mcp.merge_nodes", return_value=1) as mock_merge:
-
-        # Import merge_nodes into mcp namespace for patching
-        import wisdom.mcp as mcp_mod
-        mcp_mod.merge_nodes = mock_merge
+         patch("wisdom.merge.merge_nodes", return_value=1):
 
         result = _handle_remember({
             "label": "DozerDB ignores NEO4J_AUTH if data dir exists",
@@ -213,10 +209,7 @@ def test_reflect_returns_stats():
         return driver
 
     with patch("wisdom.mcp._get_driver", side_effect=fake_driver), \
-         patch("wisdom.mcp.run_reflect", return_value=fake_stats):
-        import wisdom.mcp as mcp_mod
-        from wisdom.reflect import run_reflect
-        mcp_mod.run_reflect = lambda session, project=None: fake_stats
+         patch("wisdom.reflect.run_reflect", return_value=fake_stats):
 
         result = _handle_reflect({})
 
@@ -243,9 +236,7 @@ def test_report_returns_markdown():
         return driver
 
     with patch("wisdom.mcp._get_driver", side_effect=fake_driver), \
-         patch("wisdom.mcp.render_report", return_value=fake_md):
-        import wisdom.mcp as mcp_mod
-        mcp_mod.render_report = lambda session, project="": fake_md
+         patch("wisdom.report.render_report", return_value=fake_md):
 
         result = _handle_report({})
 
@@ -297,15 +288,9 @@ def test_ingest_single_file(tmp_path):
         return driver
 
     with patch("wisdom.mcp._get_driver", side_effect=fake_driver), \
-         patch("wisdom.mcp.classify_file", return_value=fake_extraction), \
-         patch("wisdom.mcp.merge_nodes", return_value=1), \
-         patch("wisdom.mcp.merge_edges", return_value=0):
-        import wisdom.mcp as mcp_mod
-        from wisdom.classify import classify_file
-        from wisdom.merge import merge_nodes, merge_edges
-        mcp_mod.classify_file = lambda *a, **kw: fake_extraction
-        mcp_mod.merge_nodes = lambda session, nodes: len(nodes)
-        mcp_mod.merge_edges = lambda session, edges: len(edges)
+         patch("wisdom.classify.classify_file", return_value=fake_extraction), \
+         patch("wisdom.merge.merge_nodes", return_value=1), \
+         patch("wisdom.merge.merge_edges", return_value=0):
 
         result = _handle_ingest({"source": str(py_file), "project": "test"})
 
