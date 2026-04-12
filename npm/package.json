@@ -5,7 +5,7 @@
   "description": "Accumulative Neo4j-native DIKW memory for Claude Code — permanent knowledge across sessions",
   "main": "index.js",
   "bin": {
-    "wisdomgraph": "./index.js"
+    "wisdomgraph": "index.js"
   },
   "scripts": {
     "test": "node test.js"

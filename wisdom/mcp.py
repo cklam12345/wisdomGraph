@@ -14,9 +14,10 @@ Configure in .claude/settings.json:
 Tools exposed:
 - wisdom_ingest      : ingest a file / directory / URL into Neo4j
 - wisdom_remember    : store an explicit knowledge node
+- wisdom_learn       : record an outcome (SUCCEEDED/FAILED/PARTIAL) + lesson learned
 - wisdom_query       : run a Cypher traversal and return results
-- wisdom_reflect     : run the DIKW promotion pipeline
-- wisdom_report      : return tier counts + top Wisdom nodes as markdown
+- wisdom_reflect     : run the DIKW promotion pipeline (surfaces failure anti-patterns)
+- wisdom_report      : return tier counts + top Wisdom nodes + PREVENTS warnings as markdown
 """
 from __future__ import annotations
 
@@ -132,6 +133,46 @@ _TOOL_DEFS: list[dict] = [
                 },
             },
             "required": ["label", "content"],
+        },
+    },
+    {
+        "name": "wisdom_learn",
+        "description": (
+            "Record what you tried, whether it SUCCEEDED or FAILED, and the lesson learned. "
+            "This is the core of wisdomGraph's failure knowledge system — hard-won failures "
+            "become anti-pattern Insights and PREVENTS edges that warn future sessions. "
+            "Call this after any significant attempt: bug fix, architecture decision, deployment, experiment."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "label": {
+                    "type": "string",
+                    "description": "Short label for what was attempted (e.g. 'Deploy with sqlite on Heroku').",
+                },
+                "what_was_tried": {
+                    "type": "string",
+                    "description": "Description of the approach or action taken.",
+                },
+                "outcome": {
+                    "type": "string",
+                    "enum": ["SUCCEEDED", "FAILED", "PARTIAL", "UNKNOWN"],
+                    "description": "The result. FAILED outcomes get elevated confidence in the wisdom graph — hard-won knowledge.",
+                },
+                "lesson": {
+                    "type": "string",
+                    "description": "What was learned. For failures: what to avoid and why. For successes: what made it work.",
+                },
+                "project": {
+                    "type": "string",
+                    "description": "Project context. Optional.",
+                },
+                "confidence": {
+                    "type": "number",
+                    "description": "Confidence in this lesson 0.0–1.0. Failures default to 0.9 (high — hard to acquire). Defaults to 0.8.",
+                },
+            },
+            "required": ["label", "what_was_tried", "outcome", "lesson"],
         },
     },
     {
@@ -332,6 +373,98 @@ def _handle_remember(args: dict[str, Any]) -> _Result:
     )
 
 
+def _handle_learn(args: dict[str, Any]) -> _Result:
+    label = args.get("label", "").strip()
+    what_was_tried = args.get("what_was_tried", "").strip()
+    outcome = args.get("outcome", "UNKNOWN").upper()
+    lesson = args.get("lesson", "").strip()
+    project = args.get("project", "")
+    # Failures default to 0.9 confidence — hard-won knowledge
+    default_confidence = 0.9 if outcome == "FAILED" else 0.8
+    confidence = float(args.get("confidence", default_confidence))
+
+    if not label or not what_was_tried or not lesson:
+        return _err("'label', 'what_was_tried', and 'lesson' are required")
+
+    valid_outcomes = {"SUCCEEDED", "FAILED", "PARTIAL", "UNKNOWN"}
+    if outcome not in valid_outcomes:
+        return _err(f"'outcome' must be one of: {', '.join(sorted(valid_outcomes))}")
+
+    exp_id = f"exp:{hashlib.sha256(label.encode()).hexdigest()[:16]}"
+    content = f"{what_was_tried}\n\nLesson: {lesson}"
+
+    exp_node = {
+        "id": exp_id,
+        "label": label,
+        "content": content,
+        "tier": "experience",
+        "project": project,
+        "confidence": confidence,
+        "confidence_tag": "LEARNED",
+        "outcome": outcome,
+        "lesson": lesson,
+    }
+
+    try:
+        driver = _get_driver()
+    except RuntimeError as exc:
+        return _err(str(exc))
+
+    from .merge import merge_nodes
+    with driver.session() as session:
+        # Write the Experience node with outcome + lesson fields
+        session.run(
+            """
+            MERGE (e:Experience {id: $id})
+            ON CREATE SET
+                e.label     = $label,
+                e.content   = $content,
+                e.outcome   = $outcome,
+                e.lesson    = $lesson,
+                e.project   = $project,
+                e.confidence = $confidence,
+                e.tier      = 'experience',
+                e.timestamp = $ts
+            ON MATCH SET
+                e.outcome   = $outcome,
+                e.lesson    = $lesson,
+                e.confidence = CASE WHEN $confidence > e.confidence
+                    THEN $confidence ELSE e.confidence END,
+                e.content   = $content
+            """,
+            id=exp_id,
+            label=label,
+            content=content,
+            outcome=outcome,
+            lesson=lesson,
+            project=project,
+            confidence=confidence,
+            ts=__import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
+        )
+    driver.close()
+
+    outcome_icon = {"SUCCEEDED": "✅", "FAILED": "❌", "PARTIAL": "⚠️", "UNKNOWN": "❓"}.get(outcome, "")
+    lines = [
+        f"## Learned {outcome_icon} {outcome}",
+        "",
+        f"**{label}**",
+        f"ID: `{exp_id}`",
+        "",
+        f"*What was tried:* {what_was_tried}",
+        "",
+        f"*Lesson:* {lesson}",
+        "",
+        f"Confidence: {confidence}",
+    ]
+    if outcome == "FAILED":
+        lines += [
+            "",
+            "> 💡 Run `wisdom_reflect` to promote this failure into an anti-pattern Insight",
+            "> and generate PREVENTS edges that warn future sessions.",
+        ]
+    return _ok("\n".join(lines))
+
+
 def _handle_query(args: dict[str, Any]) -> _Result:
     cypher = args.get("cypher", "").strip()
     params = args.get("params", {}) or {}
@@ -393,20 +526,47 @@ def _handle_reflect(args: dict[str, Any]) -> _Result:
     driver.close()
 
     candidates = stats.pop("wisdom_candidates_data", [])
+    failure_promoted = stats.get("failure_insight_promoted", 0)
+    prevents_edges = stats.get("prevents_edges", 0)
+
     lines = [
         "## DIKW Reflection complete",
         "",
-        f"- Experience nodes promoted: {stats.get('experience_promoted', 0)}",
-        f"- Insight nodes promoted:    {stats.get('insight_promoted', 0)}",
-        f"- Wisdom candidates found:   {stats.get('wisdom_candidates', 0)}",
-        f"- Reinforcement edges added: {stats.get('reinforcement_edges', 0)}",
+        "### Promotion pipeline",
+        f"- Experience nodes promoted:      {stats.get('experience_promoted', 0)}",
+        f"- ❌ Failure anti-patterns found: {failure_promoted}",
+        f"- ✅ Success insights promoted:   {stats.get('insight_promoted', 0)}",
+        f"- Wisdom candidates crystallised: {stats.get('wisdom_candidates', 0)}",
+        "",
+        "### Feedback edges",
+        f"- PREVENTS edges written: {prevents_edges}  ← anti-pattern Wisdom → Knowledge to avoid",
+        f"- REINFORCES edges added: {stats.get('reinforcement_edges', 0)}  ← successful Wisdom → Knowledge to build on",
     ]
 
-    if candidates:
-        lines += ["", "### Wisdom candidates (ready to crystallise)", ""]
-        for c in candidates[:5]:
+    # Surface anti-pattern wisdom candidates first
+    antipatterns = [c for c in candidates if c.get("is_antipattern")]
+    successes    = [c for c in candidates if not c.get("is_antipattern")]
+
+    if antipatterns:
+        lines += ["", "### ⚠️ Anti-pattern Wisdom (AVOID these paths)", ""]
+        for c in antipatterns[:5]:
             lines.append(f"- **{c['label']}** (strength={c['strength']:.2f}, sources={c['count']})")
-            lines.append(f"  {c.get('content', '')}")
+            if c.get("content"):
+                lines.append(f"  _{c['content']}_")
+
+    if successes:
+        lines += ["", "### 💡 Wisdom candidates (ready to crystallise)", ""]
+        for c in successes[:5]:
+            lines.append(f"- **{c['label']}** (strength={c['strength']:.2f}, sources={c['count']})")
+            if c.get("content"):
+                lines.append(f"  _{c['content']}_")
+
+    if failure_promoted > 0:
+        lines += [
+            "",
+            "> Hard-won failure knowledge has been promoted with elevated confidence.",
+            "> PREVENTS edges now warn future traversals before they repeat these mistakes.",
+        ]
 
     return _ok("\n".join(lines))
 
@@ -430,6 +590,7 @@ def _handle_report(args: dict[str, Any]) -> _Result:
 _HANDLERS = {
     "wisdom_ingest":   _handle_ingest,
     "wisdom_remember": _handle_remember,
+    "wisdom_learn":    _handle_learn,
     "wisdom_query":    _handle_query,
     "wisdom_reflect":  _handle_reflect,
     "wisdom_report":   _handle_report,

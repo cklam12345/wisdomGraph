@@ -192,11 +192,13 @@ def test_reflect_returns_stats():
 
     fake_stats = {
         "experience_promoted": 3,
+        "failure_insight_promoted": 2,
         "insight_promoted": 1,
         "wisdom_candidates": 2,
         "wisdom_candidates_data": [
-            {"label": "MERGE is idempotent", "strength": 0.82, "count": 5, "content": "Pattern seen across 5 sources."},
+            {"label": "MERGE is idempotent", "strength": 0.82, "count": 5, "content": "Pattern seen across 5 sources.", "is_antipattern": False},
         ],
+        "prevents_edges": 3,
         "reinforcement_edges": 4,
     }
 
@@ -215,9 +217,49 @@ def test_reflect_returns_stats():
 
     assert not result.isError
     text = result.content[0].text
-    assert "Experience nodes promoted: 3" in text
-    assert "Insight nodes promoted:    1" in text
-    assert "Wisdom candidates found:   2" in text
+    assert "3" in text  # experience_promoted
+    assert "PREVENTS" in text
+    assert "Reflection" in text
+
+
+def test_reflect_surfaces_antipatterns():
+    from wisdom.mcp import _handle_reflect
+
+    fake_stats = {
+        "experience_promoted": 1,
+        "failure_insight_promoted": 1,
+        "insight_promoted": 0,
+        "wisdom_candidates": 1,
+        "wisdom_candidates_data": [
+            {
+                "label": "[AVOID] sqlite on Heroku",
+                "strength": 0.75,
+                "count": 2,
+                "content": "ANTI-PATTERN: sqlite resets on dyno restart.",
+                "is_antipattern": True,
+            },
+        ],
+        "prevents_edges": 2,
+        "reinforcement_edges": 0,
+    }
+
+    def fake_driver():
+        driver = MagicMock()
+        ctx = MagicMock()
+        ctx.__enter__ = MagicMock(return_value=MagicMock())
+        ctx.__exit__ = MagicMock(return_value=False)
+        driver.session.return_value = ctx
+        return driver
+
+    with patch("wisdom.mcp._get_driver", side_effect=fake_driver), \
+         patch("wisdom.reflect.run_reflect", return_value=fake_stats):
+
+        result = _handle_reflect({})
+
+    assert not result.isError
+    text = result.content[0].text
+    assert "Anti-pattern" in text or "AVOID" in text
+    assert "hard-won" in text.lower() or "failure" in text.lower()
 
 
 # ── _handle_report ────────────────────────────────────────────────────────────
@@ -291,14 +333,128 @@ def test_ingest_single_file(tmp_path):
     assert "1 file" in result.content[0].text
 
 
+# ── _handle_learn ────────────────────────────────────────────────────────────
+
+def test_learn_missing_required_fields():
+    from wisdom.mcp import _handle_learn
+    result = _handle_learn({"label": "test"})
+    assert result.isError
+    assert "required" in result.content[0].text
+
+
+def test_learn_invalid_outcome():
+    from wisdom.mcp import _handle_learn
+    result = _handle_learn({
+        "label": "test",
+        "what_was_tried": "did stuff",
+        "outcome": "MAYBE",
+        "lesson": "something",
+    })
+    assert result.isError
+    assert "outcome" in result.content[0].text.lower()
+
+
+def test_learn_failure_writes_experience():
+    from wisdom.mcp import _handle_learn
+
+    def fake_driver():
+        driver = MagicMock()
+        ctx = MagicMock()
+        ctx.__enter__ = MagicMock(return_value=MagicMock())
+        ctx.__exit__ = MagicMock(return_value=False)
+        driver.session.return_value = ctx
+        return driver
+
+    with patch("wisdom.mcp._get_driver", side_effect=fake_driver):
+        result = _handle_learn({
+            "label": "SQLite on Heroku",
+            "what_was_tried": "Used SQLite as primary DB on Heroku free dyno",
+            "outcome": "FAILED",
+            "lesson": "Heroku dynos are ephemeral — SQLite data is lost on restart. Use Postgres.",
+            "project": "myapp",
+        })
+
+    assert not result.isError
+    text = result.content[0].text
+    assert "FAILED" in text
+    assert "SQLite on Heroku" in text
+    assert "❌" in text
+    # Should prompt to run reflect
+    assert "wisdom_reflect" in text
+
+
+def test_learn_success_no_reflect_prompt():
+    from wisdom.mcp import _handle_learn
+
+    def fake_driver():
+        driver = MagicMock()
+        ctx = MagicMock()
+        ctx.__enter__ = MagicMock(return_value=MagicMock())
+        ctx.__exit__ = MagicMock(return_value=False)
+        driver.session.return_value = ctx
+        return driver
+
+    with patch("wisdom.mcp._get_driver", side_effect=fake_driver):
+        result = _handle_learn({
+            "label": "Deploy with Docker Compose",
+            "what_was_tried": "Used Docker Compose with --env-file",
+            "outcome": "SUCCEEDED",
+            "lesson": "Compose + --env-file cleanly separates secrets from repo.",
+            "project": "infra",
+        })
+
+    assert not result.isError
+    text = result.content[0].text
+    assert "SUCCEEDED" in text
+    assert "✅" in text
+    # No failure prompt for successes
+    assert "wisdom_reflect" not in text
+
+
+def test_learn_failure_defaults_to_high_confidence():
+    """FAILED outcomes should default to 0.9 confidence — hard-won knowledge."""
+    from wisdom.mcp import _handle_learn
+
+    captured = {}
+
+    def fake_driver():
+        session_mock = MagicMock()
+
+        def capture_run(query, **kwargs):
+            if "confidence" in kwargs:
+                captured["confidence"] = kwargs["confidence"]
+            return MagicMock()
+
+        session_mock.run.side_effect = capture_run
+        driver = MagicMock()
+        ctx = MagicMock()
+        ctx.__enter__ = MagicMock(return_value=session_mock)
+        ctx.__exit__ = MagicMock(return_value=False)
+        driver.session.return_value = ctx
+        return driver
+
+    with patch("wisdom.mcp._get_driver", side_effect=fake_driver):
+        result = _handle_learn({
+            "label": "NEO4J_AUTH ignored with existing data dir",
+            "what_was_tried": "Reused ~/neo4j/data from prior project",
+            "outcome": "FAILED",
+            "lesson": "NEO4J_AUTH is ignored if data dir has existing credentials. Use a fresh data dir.",
+        })
+
+    assert not result.isError
+    # Default confidence for failures is 0.9
+    assert "0.9" in result.content[0].text
+
+
 # ── Tool list ─────────────────────────────────────────────────────────────────
 
-def test_tool_list_has_five_tools():
+def test_tool_list_has_six_tools():
     from wisdom.mcp import _TOOL_DEFS
     names = {t["name"] for t in _TOOL_DEFS}
     assert names == {
         "wisdom_ingest",
         "wisdom_remember",
+        "wisdom_learn",
         "wisdom_query",
         "wisdom_reflect",
         "wisdom_report",
