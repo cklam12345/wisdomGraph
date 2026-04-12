@@ -1,0 +1,91 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wisdomgraph"
+version = "0.2.0"
+description = "Accumulative Neo4j-native DIKW wisdom memory for AI coding assistants (Claude Code, OpenClaw)"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+keywords = [
+    "claude", "claude-code", "openclaw", "neo4j", "knowledge-graph",
+    "graphrag", "dikw", "wisdom", "memory", "accumulative", "llm",
+    "skill", "agent-memory", "dozerdb", "mcp", "model-context-protocol",
+]
+requires-python = ">=3.10"
+dependencies = [
+    "neo4j>=5.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/cklam12345/wisdomGraph"
+Repository = "https://github.com/cklam12345/wisdomGraph"
+Issues = "https://github.com/cklam12345/wisdomGraph/issues"
+
+[project.optional-dependencies]
+mcp = [
+    "mcp>=1.0",
+]
+ast = [
+    "tree-sitter",
+    "tree-sitter-python",
+    "tree-sitter-javascript",
+    "tree-sitter-typescript",
+    "tree-sitter-go",
+    "tree-sitter-rust",
+    "tree-sitter-java",
+    "tree-sitter-c",
+    "tree-sitter-cpp",
+    "tree-sitter-ruby",
+    "tree-sitter-c-sharp",
+    "tree-sitter-kotlin",
+    "tree-sitter-scala",
+    "tree-sitter-php",
+    "tree-sitter-swift",
+    "tree-sitter-lua",
+    "tree-sitter-zig",
+    "tree-sitter-powershell",
+    "tree-sitter-elixir",
+    "tree-sitter-objc",
+]
+pdf = ["pypdf", "html2text"]
+office = ["python-docx", "openpyxl"]
+all = [
+    "mcp>=1.0",
+    "tree-sitter",
+    "tree-sitter-python",
+    "tree-sitter-javascript",
+    "tree-sitter-typescript",
+    "tree-sitter-go",
+    "tree-sitter-rust",
+    "tree-sitter-java",
+    "tree-sitter-c",
+    "tree-sitter-cpp",
+    "tree-sitter-ruby",
+    "tree-sitter-c-sharp",
+    "tree-sitter-kotlin",
+    "tree-sitter-scala",
+    "tree-sitter-php",
+    "tree-sitter-swift",
+    "tree-sitter-lua",
+    "tree-sitter-zig",
+    "tree-sitter-powershell",
+    "tree-sitter-elixir",
+    "tree-sitter-objc",
+    "pypdf",
+    "html2text",
+    "python-docx",
+    "openpyxl",
+]
+
+[project.scripts]
+wisdom = "wisdom.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["wisdom*"]
+
+[tool.setuptools.package-data]
+wisdom = ["skill.md", "skill-claw.md", "skill-windows.md"]
