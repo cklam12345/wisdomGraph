@@ -20,40 +20,66 @@ Tools exposed:
 """
 from __future__ import annotations
 
-import json
+import hashlib
 import sys
 from pathlib import Path
 from typing import Any
 
-# ── MCP SDK ──────────────────────────────────────────────────────────────────
+# ── MCP availability flag ─────────────────────────────────────────────────────
+# We do NOT sys.exit at import time so tests can import handlers without mcp SDK.
+_MCP_AVAILABLE = False
 try:
     from mcp.server import Server
     from mcp.server.stdio import stdio_server
-    from mcp.types import (
-        Tool,
-        TextContent,
-        CallToolResult,
-        ListToolsResult,
-    )
+    from mcp.types import Tool, TextContent, CallToolResult, ListToolsResult
+    _MCP_AVAILABLE = True
 except ImportError:
-    print(
-        "error: mcp package not installed. Run: pip install 'wisdomgraph[mcp]'",
-        file=sys.stderr,
-    )
-    sys.exit(1)
+    # Stub types so the rest of the module loads cleanly without the SDK.
+    class _Stub:  # type: ignore[override]
+        def __init__(self, *a, **kw): pass
+    Tool = TextContent = CallToolResult = ListToolsResult = Server = stdio_server = _Stub  # type: ignore[misc,assignment]
 
 
-# ── Tool definitions ──────────────────────────────────────────────────────────
+# ── Lightweight result containers (no mcp dependency) ────────────────────────
 
-_TOOLS: list[Tool] = [
-    Tool(
-        name="wisdom_ingest",
-        description=(
+class _Result:
+    """Internal result — converted to CallToolResult only inside run_mcp_server."""
+    __slots__ = ("text", "is_error")
+    def __init__(self, text: str, is_error: bool = False):
+        self.text = text
+        self.is_error = is_error
+
+    # Let tests inspect these directly without needing mcp types
+    @property
+    def content(self):
+        class _C:
+            def __init__(self, t): self.text = t
+        return [_C(self.text)]
+
+    @property
+    def isError(self):
+        return self.is_error
+
+
+def _ok(text: str) -> _Result:
+    return _Result(text)
+
+
+def _err(text: str) -> _Result:
+    return _Result(f"error: {text}", is_error=True)
+
+
+# ── Tool definitions (plain dicts — no mcp.types.Tool needed at import) ──────
+
+_TOOL_DEFS: list[dict] = [
+    {
+        "name": "wisdom_ingest",
+        "description": (
             "Ingest a local file, directory, or URL into the wisdomGraph Neo4j store. "
             "Extracts Knowledge nodes and edges, merges them idempotently. "
             "Use this whenever you read a new file, learn a new concept, or visit a URL."
         ),
-        inputSchema={
+        "inputSchema": {
             "type": "object",
             "properties": {
                 "source": {
@@ -72,20 +98,20 @@ _TOOLS: list[Tool] = [
             },
             "required": ["source"],
         },
-    ),
-    Tool(
-        name="wisdom_remember",
-        description=(
+    },
+    {
+        "name": "wisdom_remember",
+        "description": (
             "Store an explicit knowledge node in wisdomGraph. "
             "Use this to remember facts, decisions, bugs fixed, patterns noticed, "
             "or any insight worth preserving across sessions."
         ),
-        inputSchema={
+        "inputSchema": {
             "type": "object",
             "properties": {
                 "label": {
                     "type": "string",
-                    "description": "Short label / title for this node (e.g. 'DozerDB ignores NEO4J_AUTH if data dir exists').",
+                    "description": "Short label / title for this node.",
                 },
                 "content": {
                     "type": "string",
@@ -107,15 +133,15 @@ _TOOLS: list[Tool] = [
             },
             "required": ["label", "content"],
         },
-    ),
-    Tool(
-        name="wisdom_query",
-        description=(
+    },
+    {
+        "name": "wisdom_query",
+        "description": (
             "Query the wisdomGraph Neo4j store with a Cypher statement. "
             "Use this to retrieve related knowledge, find patterns, trace DIKW chains, "
             "or answer questions from the accumulated wisdom graph."
         ),
-        inputSchema={
+        "inputSchema": {
             "type": "object",
             "properties": {
                 "cypher": {
@@ -133,32 +159,32 @@ _TOOLS: list[Tool] = [
             },
             "required": ["cypher"],
         },
-    ),
-    Tool(
-        name="wisdom_reflect",
-        description=(
+    },
+    {
+        "name": "wisdom_reflect",
+        "description": (
             "Run the DIKW promotion pipeline: Knowledge → Experience → Insight → Wisdom. "
             "Call this after a significant session to distil accumulated knowledge into higher-tier wisdom. "
             "Returns promotion statistics."
         ),
-        inputSchema={
+        "inputSchema": {
             "type": "object",
             "properties": {
                 "project": {
                     "type": "string",
-                    "description": "Scope reflection to a specific project. Optional — defaults to all projects.",
+                    "description": "Scope reflection to a specific project. Optional.",
                 },
             },
         },
-    ),
-    Tool(
-        name="wisdom_report",
-        description=(
+    },
+    {
+        "name": "wisdom_report",
+        "description": (
             "Return the current wisdomGraph status as markdown: tier counts, top Wisdom nodes, "
             "god nodes (highest connectivity), and any contradictions. "
             "Read this at the start of a session to get up to speed instantly."
         ),
-        inputSchema={
+        "inputSchema": {
             "type": "object",
             "properties": {
                 "project": {
@@ -167,19 +193,11 @@ _TOOLS: list[Tool] = [
                 },
             },
         },
-    ),
+    },
 ]
 
 
 # ── Handler helpers ───────────────────────────────────────────────────────────
-
-def _ok(text: str) -> CallToolResult:
-    return CallToolResult(content=[TextContent(type="text", text=text)])
-
-
-def _err(text: str) -> CallToolResult:
-    return CallToolResult(content=[TextContent(type="text", text=f"error: {text}")], isError=True)
-
 
 def _get_driver():
     """Return a live Neo4j driver (or raise RuntimeError with a helpful message)."""
@@ -193,9 +211,9 @@ def _get_driver():
         ) from e
 
 
-# ── Tool handlers ─────────────────────────────────────────────────────────────
+# ── Tool handlers (pure Python — no mcp types needed) ────────────────────────
 
-def _handle_ingest(args: dict[str, Any]) -> CallToolResult:
+def _handle_ingest(args: dict[str, Any]) -> _Result:
     source = args.get("source", "").strip()
     project = args.get("project", "")
     tier = args.get("tier", "knowledge")
@@ -254,7 +272,7 @@ def _handle_ingest(args: dict[str, Any]) -> CallToolResult:
                 if extraction.get("edges"):
                     total_edges += merge_edges(session, extraction["edges"])
             except Exception:
-                continue  # skip unparseable files silently
+                continue
 
     driver.close()
     return _ok(
@@ -263,7 +281,7 @@ def _handle_ingest(args: dict[str, Any]) -> CallToolResult:
     )
 
 
-def _handle_remember(args: dict[str, Any]) -> CallToolResult:
+def _handle_remember(args: dict[str, Any]) -> _Result:
     label = args.get("label", "").strip()
     content = args.get("content", "").strip()
     tier = args.get("tier", "knowledge")
@@ -273,7 +291,6 @@ def _handle_remember(args: dict[str, Any]) -> CallToolResult:
     if not label or not content:
         return _err("'label' and 'content' are required")
 
-    import hashlib
     node_id = f"{tier}:{hashlib.sha256(label.encode()).hexdigest()[:16]}"
 
     node = {
@@ -293,7 +310,7 @@ def _handle_remember(args: dict[str, Any]) -> CallToolResult:
 
     from .merge import merge_nodes
     with driver.session() as session:
-        count = merge_nodes(session, [node])
+        merge_nodes(session, [node])
     driver.close()
 
     return _ok(
@@ -303,7 +320,7 @@ def _handle_remember(args: dict[str, Any]) -> CallToolResult:
     )
 
 
-def _handle_query(args: dict[str, Any]) -> CallToolResult:
+def _handle_query(args: dict[str, Any]) -> _Result:
     cypher = args.get("cypher", "").strip()
     params = args.get("params", {}) or {}
     limit = int(args.get("limit", 25))
@@ -345,15 +362,12 @@ def _handle_query(args: dict[str, Any]) -> CallToolResult:
     keys = list(records[0].keys())
     header = "| " + " | ".join(keys) + " |"
     sep = "| " + " | ".join(["---"] * len(keys)) + " |"
-    rows = []
-    for r in records:
-        row_vals = [str(r.get(k, "")) for k in keys]
-        rows.append("| " + " | ".join(row_vals) + " |")
+    rows = ["| " + " | ".join(str(r.get(k, "")) for k in keys) + " |" for r in records]
 
     return _ok("\n".join([header, sep] + rows))
 
 
-def _handle_reflect(args: dict[str, Any]) -> CallToolResult:
+def _handle_reflect(args: dict[str, Any]) -> _Result:
     project = args.get("project", None)
 
     try:
@@ -385,7 +399,7 @@ def _handle_reflect(args: dict[str, Any]) -> CallToolResult:
     return _ok("\n".join(lines))
 
 
-def _handle_report(args: dict[str, Any]) -> CallToolResult:
+def _handle_report(args: dict[str, Any]) -> _Result:
     project = args.get("project", "")
 
     try:
@@ -402,11 +416,11 @@ def _handle_report(args: dict[str, Any]) -> CallToolResult:
 
 
 _HANDLERS = {
-    "wisdom_ingest":  _handle_ingest,
+    "wisdom_ingest":   _handle_ingest,
     "wisdom_remember": _handle_remember,
-    "wisdom_query":   _handle_query,
-    "wisdom_reflect": _handle_reflect,
-    "wisdom_report":  _handle_report,
+    "wisdom_query":    _handle_query,
+    "wisdom_reflect":  _handle_reflect,
+    "wisdom_report":   _handle_report,
 }
 
 
@@ -414,21 +428,37 @@ _HANDLERS = {
 
 def run_mcp_server() -> None:
     """Start the wisdomGraph MCP server over stdio."""
+    if not _MCP_AVAILABLE:
+        print(
+            "error: mcp package not installed. Run: pip install 'wisdomgraph[mcp]'",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
     server = Server("wisdomGraph")
+
+    # Build typed Tool list now that we know mcp is available
+    tools = [Tool(name=t["name"], description=t["description"], inputSchema=t["inputSchema"]) for t in _TOOL_DEFS]
 
     @server.list_tools()
     async def list_tools() -> ListToolsResult:
-        return ListToolsResult(tools=_TOOLS)
+        return ListToolsResult(tools=tools)
 
     @server.call_tool()
     async def call_tool(name: str, arguments: dict[str, Any]) -> CallToolResult:
         handler = _HANDLERS.get(name)
         if handler is None:
-            return _err(f"Unknown tool: {name}")
-        try:
-            return handler(arguments)
-        except Exception as exc:
-            return _err(f"Unexpected error in {name}: {exc}")
+            result = _err(f"Unknown tool: {name}")
+        else:
+            try:
+                result = handler(arguments)
+            except Exception as exc:
+                result = _err(f"Unexpected error in {name}: {exc}")
+
+        return CallToolResult(
+            content=[TextContent(type="text", text=result.text)],
+            isError=result.is_error,
+        )
 
     import asyncio
 

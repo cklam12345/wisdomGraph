@@ -33,19 +33,27 @@ def _make_driver(session=None):
 # ── Import guards ──────────────────────────────────────────────────────────────
 
 def test_mcp_importable_without_mcp_sdk(monkeypatch):
-    """wisdom.mcp should be importable; run_mcp_server fails gracefully without mcp SDK."""
+    """wisdom.mcp must be importable even without the mcp SDK installed.
+    run_mcp_server() should raise SystemExit, but import must not."""
     import sys
-    # Remove mcp from sys.modules to simulate absent SDK
+    import importlib
+
+    # Simulate absent mcp SDK
     monkeypatch.setitem(sys.modules, "mcp", None)
     monkeypatch.setitem(sys.modules, "mcp.server", None)
     monkeypatch.setitem(sys.modules, "mcp.server.stdio", None)
     monkeypatch.setitem(sys.modules, "mcp.types", None)
 
-    # Importing the module should raise SystemExit (graceful error message)
+    # Remove cached module so it re-imports
+    monkeypatch.delitem(sys.modules, "wisdom.mcp", raising=False)
+
+    # Module must import cleanly
+    mcp_mod = importlib.import_module("wisdom.mcp")
+    assert not mcp_mod._MCP_AVAILABLE
+
+    # run_mcp_server must exit gracefully
     with pytest.raises(SystemExit):
-        import importlib
-        import wisdom.mcp as mcp_mod
-        importlib.reload(mcp_mod)
+        mcp_mod.run_mcp_server()
 
 
 # ── _handle_remember ─────────────────────────────────────────────────────────
@@ -308,8 +316,8 @@ def test_ingest_single_file(tmp_path):
 # ── Tool list ─────────────────────────────────────────────────────────────────
 
 def test_tool_list_has_five_tools():
-    from wisdom.mcp import _TOOLS
-    names = {t.name for t in _TOOLS}
+    from wisdom.mcp import _TOOL_DEFS
+    names = {t["name"] for t in _TOOL_DEFS}
     assert names == {
         "wisdom_ingest",
         "wisdom_remember",
@@ -320,17 +328,17 @@ def test_tool_list_has_five_tools():
 
 
 def test_all_tools_have_descriptions():
-    from wisdom.mcp import _TOOLS
-    for tool in _TOOLS:
-        assert tool.description, f"{tool.name} has no description"
-        assert len(tool.description) > 20, f"{tool.name} description too short"
+    from wisdom.mcp import _TOOL_DEFS
+    for tool in _TOOL_DEFS:
+        assert tool["description"], f"{tool['name']} has no description"
+        assert len(tool["description"]) > 20, f"{tool['name']} description too short"
 
 
 def test_all_tools_have_input_schema():
-    from wisdom.mcp import _TOOLS
-    for tool in _TOOLS:
-        assert tool.inputSchema, f"{tool.name} missing inputSchema"
-        assert tool.inputSchema.get("type") == "object"
+    from wisdom.mcp import _TOOL_DEFS
+    for tool in _TOOL_DEFS:
+        assert tool["inputSchema"], f"{tool['name']} missing inputSchema"
+        assert tool["inputSchema"].get("type") == "object"
 
 
 # ── mcp-install CLI ───────────────────────────────────────────────────────────
