@@ -1,7 +1,7 @@
 # LinkedIn Community Post: wisdomGraph Learning From Its Own Mistake
 
 Image to attach:
-`/home/human/Pictures/Screenshots/wisdomLearn.png`
+`marketing/wisdomLearn.png`
 
 Alt text:
 Screenshot of a terminal and browser. The browser shows PyPI with `wisdomgraph 0.3.0` as the latest version. The terminal shows a user calling out an AI assistant for repeating a release-verification mistake, followed by the assistant attempting to record the failure as a `wisdom_learn` lesson in wisdomGraph.
@@ -133,4 +133,3 @@ A note file can store the text. wisdomGraph stores it as an Experience with outc
 What changed in 0.3.0?
 
 Codex MCP support, `wisdom quickstart`, broader MCP tools, and a smoother path for using one persistent Neo4j-backed graph across agent hosts.
-

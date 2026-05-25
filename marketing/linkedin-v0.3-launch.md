@@ -223,7 +223,7 @@ Day 1: Launch post.
 Angle: 0.3.0 is out, Codex MCP support, persistent graph memory for agents.
 
 Optional community version:
-Use `marketing/linkedin-wisdom-learn-community-post.md` with `/home/human/Pictures/Screenshots/wisdomLearn.png` to show wisdomGraph recording a real release-verification failure as agent memory.
+Use `marketing/linkedin-wisdom-learn-community-post.md` with `marketing/wisdomLearn.png` to show wisdomGraph recording a real release-verification failure as agent memory.
 
 Day 2: Technical diagram post.
 
