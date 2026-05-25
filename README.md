@@ -6,11 +6,14 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Neo4j](https://img.shields.io/badge/Neo4j-native-008CC1?logo=neo4j)](https://neo4j.com)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-MCP-blueviolet)](https://claude.ai/code)
+[![Codex](https://img.shields.io/badge/Codex-MCP-black)](https://openai.com/codex)
 [![OpenClaw](https://img.shields.io/badge/OpenClaw-skill-orange)](https://openclaw.ai)
 
+> **Graph-native persistent cognition for AI agents.**
+>
 > **graphify gives you a snapshot. wisdomGraph gives you memory that compounds.**
 
-Type `/wisdom` in Claude Code or OpenClaw. Feed it your codebases, notes, papers, conversations — every run **merges** into a living Neo4j graph. The graph doesn't reset. It accumulates. Facts become patterns. Patterns become insights. Insights become wisdom.
+Use wisdomGraph from Claude Code, Codex, OpenClaw, or any MCP host. Feed it your codebases, notes, papers, conversations — every run **merges** into a living Neo4j graph. The graph doesn't reset. It accumulates. Facts become patterns. Patterns become insights. Insights become wisdom.
 
 ```
 /wisdom .                      # absorb this project into the wisdom graph
@@ -63,15 +66,51 @@ The feedback loop is critical: when a Wisdom node is queried and found useful, i
 
 ## Install
 
-**Requires:** Python 3.10+ and one of: [Claude Code](https://claude.ai/code), [OpenClaw](https://openclaw.ai)
+**Requires:** Python 3.10+ and one of: [Claude Code](https://claude.ai/code), [Codex](https://openai.com/codex), [OpenClaw](https://openclaw.ai), or another MCP host
 
 **And one of:** [Neo4j Aura Free](https://neo4j.com/cloud/platform/aura-graph-database/) (cloud, no install) or [DozerDB](https://dozerdb.org) (local Docker, APOC included)
 
 ```bash
-pip install 'wisdomgraph[mcp]' && wisdom install
+pip install 'wisdomgraph[mcp]'
+wisdom quickstart
 ```
 
-### Option A — Neo4j Aura (zero infra, recommended for individuals)
+`wisdom quickstart` is the end-to-end first-time setup. It prepares storage, verifies the Neo4j connection, and registers wisdomGraph with detected MCP hosts.
+
+```bash
+# Local managed Neo4j/DozerDB backend + detected MCP hosts
+wisdom quickstart
+
+# Local backend + Codex only
+wisdom quickstart --host codex
+
+# Existing Neo4j or DozerDB instance
+wisdom quickstart --storage existing --uri bolt://localhost:7689 --user neo4j --password <password>
+
+# Neo4j Aura
+wisdom quickstart --storage aura --uri bolt+s://xxxxxxxx.databases.neo4j.io --user neo4j --password <password>
+```
+
+The MCP server itself never starts Docker or creates databases. Storage setup is explicit through `quickstart`, `local`, `docker`, or `connect`.
+
+### Option A — Managed local backend (recommended first run)
+
+```bash
+wisdom local up
+wisdom doctor
+```
+
+This starts a managed DozerDB/Neo4j container named `wisdomgraph-neo4j`, stores data under `~/.wisdom/neo4j`, generates a local password, saves the connection, and leaves MCP startup cleanly separate.
+
+Useful commands:
+
+```bash
+wisdom local status
+wisdom local logs
+wisdom local down
+```
+
+### Option B — Neo4j Aura (zero local database)
 
 1. Create a free account at [neo4j.com/cloud/aura](https://neo4j.com/cloud/aura)
 2. Create a free AuraDB instance — copy the connection URI and password
@@ -83,7 +122,7 @@ wisdom connect bolt+s://xxxxxxxx.databases.neo4j.io --user neo4j --password <you
 
 Free tier: 200,000 nodes. Enough for years of accumulated wisdom.
 
-### Option B — DozerDB local Docker (full control, APOC included)
+### Option C — Legacy/manual DozerDB Docker (full control, APOC included)
 
 ```bash
 wisdom docker up        # pulls graphstack/dozerdb:5.26.3.0 and starts it
@@ -111,6 +150,8 @@ Open [localhost:7474](http://localhost:7474) — Neo4j Browser is your visual wi
 | Platform | Install command |
 |----------|----------------|
 | Claude Code (Linux/Mac) | `wisdom install` |
+| Claude Code MCP | `wisdom mcp-install` |
+| Codex MCP | `wisdom mcp-install --host codex` |
 | Claude Code (Windows) | `wisdom install --platform windows` |
 | OpenClaw | `wisdom install --platform claw` |
 
@@ -122,11 +163,11 @@ Then open your AI coding assistant and type:
 
 ---
 
-## Claude Code MCP integration (v0.2.0+)
+## MCP integration (v0.2.0+)
 
-wisdomGraph ships as a native **Model Context Protocol (MCP) server** for Claude Code. Once registered, Claude calls `wisdom_ingest`, `wisdom_remember`, `wisdom_query`, `wisdom_reflect`, and `wisdom_report` as first-class tools — no `/wisdom` slash command needed.
+wisdomGraph ships as a native **Model Context Protocol (MCP) server**. Once registered, Claude, Codex, or another MCP host can call wisdomGraph tools directly — no `/wisdom` slash command needed.
 
-### Setup (one command)
+### Claude Code setup
 
 ```bash
 wisdom mcp-install
@@ -145,14 +186,33 @@ This writes the MCP server entry to `.claude/settings.json` in your current proj
 }
 ```
 
-Restart Claude Code. wisdomGraph is now live in every session.
+Restart Claude Code. wisdomGraph is now live in that project.
+
+### Codex setup (v0.3.0+)
+
+```bash
+wisdom mcp-install --host codex
+```
+
+This runs the Codex MCP registration:
+
+```bash
+codex mcp add wisdomGraph -- wisdom mcp
+```
+
+Start a new Codex session. Codex can now launch `wisdom mcp` and use the same Neo4j-backed DIKW graph as Claude Code.
 
 ### MCP tools
 
-| Tool | What Claude uses it for |
+| Tool | What agents use it for |
 |---|---|
 | `wisdom_ingest` | Absorb a file, directory, or URL into Neo4j |
 | `wisdom_remember` | Store a fact, decision, or insight explicitly |
+| `wisdom_learn` | Record an attempt, outcome, and lesson learned |
+| `wisdom_status` | Read DIKW tier counts and edge/source totals |
+| `wisdom_list` | List nodes by DIKW tier, project, and connectivity |
+| `wisdom_trace` | Trace why an insight or wisdom node exists |
+| `wisdom_explain` | Explain a node with its DIKW chain and sources |
 | `wisdom_query` | Run a read-only Cypher traversal |
 | `wisdom_reflect` | Trigger DIKW promotion pipeline |
 | `wisdom_report` | Get tier counts + top Wisdom nodes as markdown |
@@ -176,6 +236,9 @@ wisdom mcp-install
 
 # Register globally (all projects on this machine)
 wisdom mcp-install --project ~
+
+# Register globally with Codex
+wisdom mcp-install --host codex
 ```
 
 ---

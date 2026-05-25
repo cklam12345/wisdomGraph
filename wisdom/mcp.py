@@ -15,6 +15,10 @@ Tools exposed:
 - wisdom_ingest      : ingest a file / directory / URL into Neo4j
 - wisdom_remember    : store an explicit knowledge node
 - wisdom_learn       : record an outcome (SUCCEEDED/FAILED/PARTIAL) + lesson learned
+- wisdom_status      : return DIKW tier counts and edge/source totals
+- wisdom_list        : list nodes by DIKW tier, project, and connectivity
+- wisdom_trace       : trace a node's graph neighborhood and DIKW provenance
+- wisdom_explain     : explain a node with its DIKW chain and sources
 - wisdom_query       : run a Cypher traversal and return results
 - wisdom_reflect     : run the DIKW promotion pipeline (surfaces failure anti-patterns)
 - wisdom_report      : return tier counts + top Wisdom nodes + PREVENTS warnings as markdown
@@ -202,6 +206,87 @@ _TOOL_DEFS: list[dict] = [
         },
     },
     {
+        "name": "wisdom_status",
+        "description": (
+            "Return wisdomGraph status: Knowledge, Experience, Insight, Wisdom, Source, "
+            "and edge counts. Read-only. Use this at the start of an agent session."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+    {
+        "name": "wisdom_list",
+        "description": (
+            "List nodes from a DIKW tier, optionally filtered by project, ordered by graph degree. "
+            "Read-only. Useful for seeing available knowledge, insights, or wisdom without Cypher."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "tier": {
+                    "type": "string",
+                    "enum": ["knowledge", "experience", "insight", "wisdom"],
+                    "description": "DIKW tier to list. Defaults to insight.",
+                },
+                "project": {
+                    "type": "string",
+                    "description": "Optional project filter.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max rows to return. Defaults to 10.",
+                },
+            },
+        },
+    },
+    {
+        "name": "wisdom_trace",
+        "description": (
+            "Trace a node by id or label and return its DIKW provenance plus neighboring edges. "
+            "Read-only. Use this to explain why an insight or wisdom node exists."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "description": "Exact node id. Optional if label is provided.",
+                },
+                "label": {
+                    "type": "string",
+                    "description": "Label substring to find. Optional if id is provided.",
+                },
+                "depth": {
+                    "type": "integer",
+                    "description": "Relationship depth for the neighborhood. Defaults to 2.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max relationships to return. Defaults to 25.",
+                },
+            },
+        },
+    },
+    {
+        "name": "wisdom_explain",
+        "description": (
+            "Explain a node by label with its DIKW chain and source provenance. "
+            "Read-only convenience wrapper around wisdomGraph traversal."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "label": {
+                    "type": "string",
+                    "description": "Node label substring to explain.",
+                },
+            },
+            "required": ["label"],
+        },
+    },
+    {
         "name": "wisdom_reflect",
         "description": (
             "Run the DIKW promotion pipeline: Knowledge → Experience → Insight → Wisdom. "
@@ -247,8 +332,8 @@ def _get_driver():
         return get_driver()
     except SystemExit as e:
         raise RuntimeError(
-            "Cannot connect to Neo4j. Make sure DozerDB is running (`wisdom docker up`) "
-            "and credentials are configured (`wisdom connect`)."
+            "Cannot connect to Neo4j. Make sure your configured Neo4j or DozerDB instance "
+            "is running and credentials are configured (`wisdom connect`)."
         ) from e
 
 
@@ -512,6 +597,205 @@ def _handle_query(args: dict[str, Any]) -> _Result:
     return _ok("\n".join([header, sep] + rows))
 
 
+def _handle_status(args: dict[str, Any]) -> _Result:
+    try:
+        driver = _get_driver()
+    except RuntimeError as exc:
+        return _err(str(exc))
+
+    from .connect import status as graph_status
+    stats = graph_status(driver)
+    driver.close()
+
+    lines = [
+        "## wisdomGraph status",
+        "",
+        f"- Knowledge:  {stats.get('Knowledge', 0)}",
+        f"- Experience: {stats.get('Experience', 0)}",
+        f"- Insight:    {stats.get('Insight', 0)}",
+        f"- Wisdom:     {stats.get('Wisdom', 0)}",
+        f"- Sources:    {stats.get('Source', 0)}",
+        f"- Edges:      {stats.get('edges', 0)}",
+    ]
+    return _ok("\n".join(lines))
+
+
+def _handle_list(args: dict[str, Any]) -> _Result:
+    tier = args.get("tier", "insight").lower()
+    project = args.get("project", "")
+    limit = int(args.get("limit", 10))
+    label = {
+        "knowledge": "Knowledge",
+        "experience": "Experience",
+        "insight": "Insight",
+        "wisdom": "Wisdom",
+    }.get(tier)
+    if not label:
+        return _err("'tier' must be one of: knowledge, experience, insight, wisdom")
+
+    try:
+        driver = _get_driver()
+    except RuntimeError as exc:
+        return _err(str(exc))
+
+    where = "WHERE ($project = '' OR n.project = $project)"
+    cypher = f"""
+        MATCH (n:{label})
+        {where}
+        RETURN n.id AS id, n.label AS label, n.tier AS tier,
+               n.project AS project, n.confidence AS confidence,
+               count{{(n)--()}} AS degree
+        ORDER BY degree DESC, label ASC
+        LIMIT $limit
+    """
+    with driver.session() as session:
+        rows = [dict(r) for r in session.run(cypher, project=project, limit=limit)]
+    driver.close()
+
+    if not rows:
+        return _ok(f"No {tier}-tier nodes found.")
+
+    lines = [f"## {label} nodes", ""]
+    for i, row in enumerate(rows, 1):
+        confidence = row.get("confidence")
+        conf = f", confidence={confidence:.2f}" if isinstance(confidence, (int, float)) else ""
+        project_text = f", project={row.get('project')}" if row.get("project") else ""
+        lines.append(
+            f"{i}. **{row.get('label', '')}** "
+            f"[{row.get('id', '')}] - degree={row.get('degree', 0)}{conf}{project_text}"
+        )
+    return _ok("\n".join(lines))
+
+
+def _handle_trace(args: dict[str, Any]) -> _Result:
+    node_id = args.get("id", "").strip()
+    label_query = args.get("label", "").strip()
+    depth = max(1, min(int(args.get("depth", 2)), 4))
+    limit = int(args.get("limit", 25))
+
+    if not node_id and not label_query:
+        return _err("'id' or 'label' is required")
+
+    try:
+        driver = _get_driver()
+    except RuntimeError as exc:
+        return _err(str(exc))
+
+    with driver.session() as session:
+        if node_id:
+            record = session.run(
+                """
+                MATCH (n {id: $id})
+                WHERE n:Knowledge OR n:Experience OR n:Insight OR n:Wisdom
+                RETURN n.id AS id, n.label AS label, n.tier AS tier,
+                       n.content AS content, n.principle AS principle,
+                       n.confidence AS confidence
+                LIMIT 1
+                """,
+                id=node_id,
+            ).single()
+        else:
+            record = session.run(
+                """
+                MATCH (n)
+                WHERE (n:Knowledge OR n:Experience OR n:Insight OR n:Wisdom)
+                  AND toLower(n.label) CONTAINS toLower($label)
+                RETURN n.id AS id, n.label AS label, n.tier AS tier,
+                       n.content AS content, n.principle AS principle,
+                       n.confidence AS confidence
+                LIMIT 1
+                """,
+                label=label_query,
+            ).single()
+
+        if not record:
+            driver.close()
+            needle = node_id or label_query
+            return _ok(f"No node found matching `{needle}`.")
+
+        node = dict(record)
+        from .traverse import get_provenance, walk_dikw_path
+        chain = walk_dikw_path(session, node["id"])
+        sources = get_provenance(session, node["id"])
+        edges = [dict(r) for r in session.run(
+            f"""
+            MATCH (n {{id: $id}})-[r*1..{depth}]-(m)
+            WHERE m:Knowledge OR m:Experience OR m:Insight OR m:Wisdom
+            WITH n, m, relationships(r) AS rels
+            UNWIND rels AS rel
+            WITH DISTINCT startNode(rel) AS a, type(rel) AS relation, endNode(rel) AS b
+            RETURN a.label AS source, relation, b.label AS target
+            LIMIT $limit
+            """,
+            id=node["id"],
+            limit=limit,
+        )]
+    driver.close()
+
+    body = node.get("principle") or node.get("content") or ""
+    lines = [
+        f"## Trace: {node.get('label', '')}",
+        "",
+        f"- ID: `{node.get('id', '')}`",
+        f"- Tier: `{node.get('tier', '')}`",
+        f"- Confidence: {node.get('confidence', 0) or 0:.2f}",
+    ]
+    if body:
+        lines += ["", body[:1000]]
+    if chain:
+        lines += ["", "### DIKW chain"]
+        for item in chain:
+            lines.append(f"- {item.get('label', '')} [{item.get('tier', '?')}]")
+    if sources:
+        lines += ["", "### Sources"]
+        for source in sources[:10]:
+            lines.append(f"- {source.get('uri', '')}")
+    if edges:
+        lines += ["", "### Neighborhood"]
+        for edge in edges:
+            lines.append(f"- {edge.get('source', '')} -[{edge.get('relation', '')}]-> {edge.get('target', '')}")
+    return _ok("\n".join(lines))
+
+
+def _handle_explain(args: dict[str, Any]) -> _Result:
+    label = args.get("label", "").strip()
+    if not label:
+        return _err("'label' is required")
+
+    try:
+        driver = _get_driver()
+    except RuntimeError as exc:
+        return _err(str(exc))
+
+    from .traverse import explain_node
+    with driver.session() as session:
+        result = explain_node(session, label)
+    driver.close()
+
+    if result.get("error"):
+        return _ok(result["error"])
+
+    body = result.get("principle") or result.get("content") or ""
+    lines = [
+        f"## {result.get('label', '')}",
+        "",
+        f"- ID: `{result.get('id', '')}`",
+        f"- Tier: `{result.get('tier', '')}`",
+        f"- Confidence: {result.get('confidence', 0) or 0:.2f}",
+    ]
+    if body:
+        lines += ["", body[:1000]]
+    if result.get("dikw_chain"):
+        lines += ["", "### DIKW chain"]
+        for item in result["dikw_chain"]:
+            lines.append(f"- {item.get('label', '')} [{item.get('tier', '?')}]")
+    if result.get("sources"):
+        lines += ["", "### Sources"]
+        for source in result["sources"][:10]:
+            lines.append(f"- {source.get('uri', '')}")
+    return _ok("\n".join(lines))
+
+
 def _handle_reflect(args: dict[str, Any]) -> _Result:
     project = args.get("project", None)
 
@@ -591,6 +875,10 @@ _HANDLERS = {
     "wisdom_ingest":   _handle_ingest,
     "wisdom_remember": _handle_remember,
     "wisdom_learn":    _handle_learn,
+    "wisdom_status":   _handle_status,
+    "wisdom_list":     _handle_list,
+    "wisdom_trace":    _handle_trace,
+    "wisdom_explain":  _handle_explain,
     "wisdom_query":    _handle_query,
     "wisdom_reflect":  _handle_reflect,
     "wisdom_report":   _handle_report,

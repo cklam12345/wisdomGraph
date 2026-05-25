@@ -1,4 +1,4 @@
-"""wisdomGraph — accumulative Neo4j-native wisdom memory for AI coding assistants."""
+"""wisdomGraph — graph-native persistent cognition for AI agents."""
 from __future__ import annotations
 
 try:

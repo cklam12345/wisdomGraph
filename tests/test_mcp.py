@@ -448,13 +448,145 @@ def test_learn_failure_defaults_to_high_confidence():
 
 # ── Tool list ─────────────────────────────────────────────────────────────────
 
-def test_tool_list_has_six_tools():
+def test_status_returns_counts():
+    from wisdom.mcp import _handle_status
+
+    fake_stats = {
+        "Knowledge": 74,
+        "Experience": 16,
+        "Insight": 11,
+        "Wisdom": 6,
+        "Source": 30,
+        "edges": 215,
+    }
+
+    with patch("wisdom.mcp._get_driver", return_value=MagicMock()), \
+         patch("wisdom.connect.status", return_value=fake_stats):
+        result = _handle_status({})
+
+    assert not result.isError
+    text = result.content[0].text
+    assert "Knowledge" in text
+    assert "Insight" in text
+    assert "215" in text
+
+
+def test_list_defaults_to_insight_nodes():
+    from wisdom.mcp import _handle_list
+
+    session = MagicMock()
+    session.run.return_value = iter([
+        {
+            "id": "insight:abc",
+            "label": "Agent infrastructure positioning",
+            "tier": "insight",
+            "project": "wisdomGraph",
+            "confidence": 0.95,
+            "degree": 3,
+        }
+    ])
+    driver = _make_driver(session)
+
+    with patch("wisdom.mcp._get_driver", return_value=driver):
+        result = _handle_list({})
+
+    assert not result.isError
+    text = result.content[0].text
+    assert "Insight nodes" in text
+    assert "Agent infrastructure" in text
+
+
+def test_list_rejects_invalid_tier():
+    from wisdom.mcp import _handle_list
+    result = _handle_list({"tier": "source"})
+    assert result.isError
+    assert "tier" in result.content[0].text
+
+
+def test_trace_requires_id_or_label():
+    from wisdom.mcp import _handle_trace
+    result = _handle_trace({})
+    assert result.isError
+    assert "id" in result.content[0].text
+
+
+def test_trace_returns_node_neighborhood():
+    from wisdom.mcp import _handle_trace
+
+    node_record = {
+        "id": "insight:abc",
+        "label": "Agent infrastructure positioning",
+        "tier": "insight",
+        "content": "Persistent cognition for agents.",
+        "principle": None,
+        "confidence": 0.95,
+    }
+    edge_record = {
+        "source": "Repo visit",
+        "relation": "REVEALS",
+        "target": "Agent infrastructure positioning",
+    }
+
+    session = MagicMock()
+    session.run.side_effect = [
+        SimpleNamespace(single=lambda: node_record),
+        iter([edge_record]),
+    ]
+    driver = _make_driver(session)
+
+    with patch("wisdom.mcp._get_driver", return_value=driver), \
+         patch("wisdom.traverse.walk_dikw_path", return_value=[]), \
+         patch("wisdom.traverse.get_provenance", return_value=[]):
+        result = _handle_trace({"label": "Agent infrastructure"})
+
+    assert not result.isError
+    text = result.content[0].text
+    assert "Trace" in text
+    assert "Agent infrastructure positioning" in text
+    assert "REVEALS" in text
+
+
+def test_explain_requires_label():
+    from wisdom.mcp import _handle_explain
+    result = _handle_explain({})
+    assert result.isError
+    assert "label" in result.content[0].text
+
+
+def test_explain_formats_dikw_chain():
+    from wisdom.mcp import _handle_explain
+
+    explanation = {
+        "id": "insight:abc",
+        "label": "Agent infrastructure positioning",
+        "tier": "insight",
+        "content": "Persistent cognition for agents.",
+        "confidence": 0.95,
+        "dikw_chain": [{"label": "WisdomGraph", "tier": "knowledge"}],
+        "sources": [{"uri": "README.md"}],
+    }
+
+    with patch("wisdom.mcp._get_driver", return_value=_make_driver()), \
+         patch("wisdom.traverse.explain_node", return_value=explanation):
+        result = _handle_explain({"label": "Agent infrastructure"})
+
+    assert not result.isError
+    text = result.content[0].text
+    assert "DIKW chain" in text
+    assert "README.md" in text
+
+
+def test_tool_list_has_ten_tools():
     from wisdom.mcp import _TOOL_DEFS
     names = {t["name"] for t in _TOOL_DEFS}
     assert names == {
         "wisdom_ingest",
         "wisdom_remember",
         "wisdom_learn",
+        "wisdom_status",
+        "wisdom_list",
+        "wisdom_trace",
+        "wisdom_explain",
         "wisdom_query",
         "wisdom_reflect",
         "wisdom_report",
@@ -482,7 +614,7 @@ def test_mcp_install_writes_settings(tmp_path):
     import sys
     from wisdom.__main__ import _install_mcp
 
-    _install_mcp(project_dir=tmp_path)
+    _install_mcp(project_dir=tmp_path, host="claude")
 
     settings_path = tmp_path / ".claude" / "settings.json"
     assert settings_path.exists()
@@ -499,10 +631,107 @@ def test_mcp_install_idempotent(tmp_path):
     import json
     from wisdom.__main__ import _install_mcp
 
-    _install_mcp(project_dir=tmp_path)
-    _install_mcp(project_dir=tmp_path)
+    _install_mcp(project_dir=tmp_path, host="claude")
+    _install_mcp(project_dir=tmp_path, host="claude")
 
     settings_path = tmp_path / ".claude" / "settings.json"
     settings = json.loads(settings_path.read_text())
     # Should still be a single entry, not a list
     assert isinstance(settings["mcpServers"]["wisdomGraph"], dict)
+
+
+def test_mcp_install_codex_noops_when_existing():
+    from wisdom.__main__ import _install_mcp
+
+    completed = SimpleNamespace(returncode=0, stdout="", stderr="")
+    with patch("shutil.which", return_value="/usr/bin/codex"), \
+         patch("subprocess.run", return_value=completed) as run:
+        _install_mcp(host="codex")
+
+    run.assert_called_once_with(
+        ["codex", "mcp", "get", "wisdomGraph"],
+        stdout=-3,
+        stderr=-3,
+        check=False,
+    )
+
+
+def test_mcp_install_rejects_unknown_host():
+    from wisdom.__main__ import _install_mcp
+
+    with pytest.raises(SystemExit):
+        _install_mcp(host="unknown")
+
+
+# ── local backend / quickstart CLI ────────────────────────────────────────────
+
+def test_local_up_starts_managed_backend_without_existing_container(tmp_path, monkeypatch):
+    import wisdom.local as local
+
+    calls = []
+
+    def fake_run(cmd, capture=False):
+        calls.append(cmd)
+        if cmd[:2] == ["docker", "info"]:
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        if cmd[:3] == ["docker", "ps", "-q"]:
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        if cmd[:3] == ["docker", "ps", "-aq"]:
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(local, "BASE_DIR", tmp_path / "neo4j")
+    monkeypatch.setattr(local, "PASSWORD_PATH", tmp_path / "local-password")
+
+    with patch("wisdom.local.shutil.which", return_value="/usr/bin/docker"), \
+         patch("wisdom.local._run", side_effect=fake_run), \
+         patch("wisdom.local._wait_for_port", return_value=True), \
+         patch("wisdom.local.save_connection") as save:
+        local.up(password="test-password")
+
+    assert any(cmd[:3] == ["docker", "run", "-d"] for cmd in calls)
+    save.assert_called_once_with(local.URI, local.USER, "test-password")
+
+
+def test_local_up_reuses_existing_running_backend():
+    import wisdom.local as local
+
+    def fake_run(cmd, capture=False):
+        if cmd[:2] == ["docker", "info"]:
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        if cmd[:3] == ["docker", "ps", "-q"]:
+            return SimpleNamespace(returncode=0, stdout="abc123\n", stderr="")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    with patch("wisdom.local.shutil.which", return_value="/usr/bin/docker"), \
+         patch("wisdom.local._run", side_effect=fake_run), \
+         patch("wisdom.local.save_connection") as save:
+        local.up(password="test-password")
+
+    save.assert_called_once_with(local.URI, local.USER, "test-password")
+
+
+def test_quickstart_local_registers_requested_host(monkeypatch):
+    import sys
+    from wisdom.__main__ import _run_quickstart
+
+    monkeypatch.setattr(sys, "argv", ["wisdom", "quickstart", "--host", "codex"])
+
+    with patch("wisdom.local.up") as local_up, \
+         patch("wisdom.__main__._doctor") as doctor, \
+         patch("wisdom.__main__._install_mcp") as install_mcp:
+        _run_quickstart()
+
+    local_up.assert_called_once_with()
+    doctor.assert_called_once_with(connect_only=True)
+    install_mcp.assert_called_once_with(host="codex")
+
+
+def test_quickstart_existing_requires_uri(monkeypatch):
+    import sys
+    from wisdom.__main__ import _run_quickstart
+
+    monkeypatch.setattr(sys, "argv", ["wisdom", "quickstart", "--storage", "existing", "--host", "none"])
+
+    with pytest.raises(SystemExit):
+        _run_quickstart()
