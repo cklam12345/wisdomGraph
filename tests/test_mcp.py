@@ -719,7 +719,7 @@ def test_local_up_starts_managed_backend_without_existing_container(tmp_path, mo
     save.assert_called_once_with(local.URI, local.USER, "test-password")
 
 
-def test_local_up_reuses_existing_running_backend():
+def test_local_up_reuses_existing_running_backend(tmp_path, monkeypatch):
     import wisdom.local as local
 
     def fake_run(cmd, capture=False):
@@ -728,6 +728,8 @@ def test_local_up_reuses_existing_running_backend():
         if cmd[:3] == ["docker", "ps", "-q"]:
             return SimpleNamespace(returncode=0, stdout="abc123\n", stderr="")
         return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(local, "PASSWORD_PATH", tmp_path / "local-password")
 
     with patch("wisdom.local.shutil.which", return_value="/usr/bin/docker"), \
          patch("wisdom.local._run", side_effect=fake_run), \
