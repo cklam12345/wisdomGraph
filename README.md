@@ -38,7 +38,7 @@ wisdomGraph does something fundamentally different.
 | **Memory** | resets each session | accumulates across sessions, projects, months |
 | **Reasoning** | community detection (topology) | graph path traversal + DIKW hierarchy |
 | **Feedback loop** | none | Wisdom → Knowledge (neuroplasticity) |
-| **Database** | none required | Neo4j Aura (free) or DozerDB Docker |
+| **Database** | none required | Neo4j Aura (free) or local Neo4j Docker |
 
 The difference is not incremental. It's architectural. graphify compresses a codebase into a readable report. wisdomGraph builds an artificial epistemology — one that remembers, connects, and grows.
 
@@ -68,7 +68,7 @@ The feedback loop is critical: when a Wisdom node is queried and found useful, i
 
 **Requires:** Python 3.10+ and one of: [Claude Code](https://claude.ai/code), [Codex](https://openai.com/codex), [OpenClaw](https://openclaw.ai), or another MCP host
 
-**And one of:** [Neo4j Aura Free](https://neo4j.com/cloud/platform/aura-graph-database/) (cloud, no install) or [DozerDB](https://dozerdb.org) (local Docker, APOC included)
+**And one of:** [Neo4j Aura Free](https://neo4j.com/cloud/platform/aura-graph-database/) (cloud, no install) or Docker Desktop/Engine for a managed local Neo4j container
 
 ```bash
 pip install 'wisdomgraph[mcp]'
@@ -78,7 +78,7 @@ wisdom quickstart
 `wisdom quickstart` is the end-to-end first-time setup. It prepares storage, verifies the Neo4j connection, and registers wisdomGraph with detected MCP hosts.
 
 ```bash
-# Local managed Neo4j/DozerDB backend + detected MCP hosts
+# Local managed Neo4j backend + detected MCP hosts
 wisdom quickstart
 
 # Local backend + Codex only
@@ -100,7 +100,7 @@ wisdom local up
 wisdom doctor
 ```
 
-This starts a managed DozerDB/Neo4j container named `wisdomgraph-neo4j`, stores data under `~/.wisdom/neo4j`, generates a local password, saves the connection, and leaves MCP startup cleanly separate.
+This starts a managed `neo4j:latest` container named `wisdomgraph-neo4j`, stores data under `~/.wisdom/neo4j`, uses the documented local login `neo4j/password`, saves the connection, and leaves MCP startup cleanly separate. The implementation uses the Docker CLI directly, so the same `wisdom local up` command works from Windows PowerShell, Windows cmd.exe, macOS Terminal, and Ubuntu Terminal after Docker is installed.
 
 Useful commands:
 
@@ -122,7 +122,7 @@ wisdom connect bolt+s://xxxxxxxx.databases.neo4j.io --user neo4j --password <you
 
 Free tier: 200,000 nodes. Enough for years of accumulated wisdom.
 
-### Option C — Legacy/manual DozerDB Docker (full control, APOC included)
+### Option C — Optional/manual DozerDB Docker (full control, APOC included)
 
 ```bash
 wisdom docker up        # pulls graphstack/dozerdb:5.26.3.0 and starts it

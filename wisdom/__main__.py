@@ -265,7 +265,11 @@ def _run_quickstart() -> None:
 
     if storage == "local":
         from wisdom.local import up as local_up
-        local_up()
+        local_up(
+            password=_get_arg("--password", None),
+            image=_get_arg("--image", None),
+            engine=_get_arg("--engine", None),
+        )
     elif storage in {"aura", "existing"}:
         uri = _get_arg("--uri", "")
         user = _get_arg("--user", "neo4j")
@@ -411,8 +415,10 @@ def main() -> None:
         from wisdom.local import down as local_down, logs as local_logs, status as local_status, up as local_up
         subcmd = sys.argv[2] if len(sys.argv) > 2 else ""
         password = _get_arg("--password", None)
+        image = _get_arg("--image", None)
+        engine = _get_arg("--engine", None)
         if subcmd == "up":
-            local_up(password=password)
+            local_up(password=password, image=image, engine=engine)
         elif subcmd == "down":
             local_down()
         elif subcmd == "status":
@@ -634,8 +640,8 @@ def _print_help() -> None:
     print("  doctor                          check Neo4j, local backend, and MCP host readiness")
     print("  install [--platform P]          copy skill (claude|windows|claw)")
     print("  connect <uri> --user U --pass P  save Neo4j connection")
-    print("  local up|down|status|logs       manage first-time local Neo4j/DozerDB backend")
-    print("  docker up|down|status           manage DozerDB local container")
+    print("  local up [--engine neo4j|dozerdb] [--image IMAGE] [--password P]")
+    print("  docker up|down|status           manage legacy/manual DozerDB container")
     print("  claude install|uninstall        write CLAUDE.md + PreToolUse hook")
     print()
     print("MCP:")

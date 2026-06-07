@@ -1,7 +1,7 @@
-"""Managed local Neo4j/DozerDB backend for first-time wisdomGraph setup."""
+"""Managed local Neo4j backend for first-time wisdomGraph setup."""
 from __future__ import annotations
 
-import secrets
+import os
 import shutil
 import socket
 import stat
@@ -13,7 +13,12 @@ from pathlib import Path
 from .connect import save_connection
 
 CONTAINER_NAME = "wisdomgraph-neo4j"
-IMAGE = "graphstack/dozerdb:5.26.3.0"
+DEFAULT_ENGINE = "neo4j"
+IMAGE_BY_ENGINE = {
+    "neo4j": "neo4j:latest",
+    "dozerdb": "graphstack/dozerdb:5.26.3.0",
+}
+DEFAULT_PASSWORD = "password"
 BASE_DIR = Path.home() / ".wisdom" / "neo4j"
 PASSWORD_PATH = Path.home() / ".wisdom" / "local-password"
 HTTP_PORT = 7474
@@ -52,14 +57,51 @@ def _ensure_dirs() -> None:
         (BASE_DIR / subdir).mkdir(parents=True, exist_ok=True)
 
 
-def _read_or_create_password() -> str:
+def _select_image(engine: str | None = None, image: str | None = None) -> str:
+    explicit_image = image or os.environ.get("WISDOM_NEO4J_IMAGE")
+    if explicit_image:
+        return explicit_image
+
+    selected_engine = (engine or os.environ.get("WISDOM_NEO4J_ENGINE") or DEFAULT_ENGINE).lower()
+    if selected_engine not in IMAGE_BY_ENGINE:
+        choices = ", ".join(sorted(IMAGE_BY_ENGINE))
+        print(f"error: unknown local backend engine '{selected_engine}'. Choose: {choices}", file=sys.stderr)
+        sys.exit(1)
+    return IMAGE_BY_ENGINE[selected_engine]
+
+
+def _read_or_create_password(default: str = DEFAULT_PASSWORD) -> str:
     if PASSWORD_PATH.exists():
         return PASSWORD_PATH.read_text(encoding="utf-8").strip()
     PASSWORD_PATH.parent.mkdir(parents=True, exist_ok=True)
-    password = "wg-" + secrets.token_urlsafe(24)
-    PASSWORD_PATH.write_text(password + "\n", encoding="utf-8")
+    PASSWORD_PATH.write_text(default + "\n", encoding="utf-8")
     PASSWORD_PATH.chmod(stat.S_IRUSR | stat.S_IWUSR)
-    return password
+    return default
+
+
+def _resolve_password(password: str | None = None) -> str:
+    selected = password or os.environ.get("WISDOM_NEO4J_PASSWORD")
+    if selected:
+        PASSWORD_PATH.parent.mkdir(parents=True, exist_ok=True)
+        PASSWORD_PATH.write_text(selected + "\n", encoding="utf-8")
+        PASSWORD_PATH.chmod(stat.S_IRUSR | stat.S_IWUSR)
+        return selected
+    return _read_or_create_password()
+
+
+def _docker_run_args(image: str, password: str) -> list[str]:
+    return [
+        "docker", "run", "-d",
+        "--name", CONTAINER_NAME,
+        "-p", f"{HTTP_PORT}:7474",
+        "-p", f"{BOLT_PORT}:7687",
+        "-v", f"{BASE_DIR}/data:/data",
+        "-v", f"{BASE_DIR}/logs:/logs",
+        "-v", f"{BASE_DIR}/import:/var/lib/neo4j/import",
+        "-v", f"{BASE_DIR}/plugins:/plugins",
+        "--env", f"NEO4J_AUTH=neo4j/{password}",
+        image,
+    ]
 
 
 def _wait_for_port(timeout_s: int = 45) -> bool:
@@ -73,8 +115,15 @@ def _wait_for_port(timeout_s: int = 45) -> bool:
     return False
 
 
-def up(password: str | None = None, connect: bool = True) -> None:
+def up(
+    password: str | None = None,
+    connect: bool = True,
+    image: str | None = None,
+    engine: str | None = None,
+) -> None:
     """Start the managed local backend and optionally save wisdomGraph connection."""
+    selected_image = _select_image(engine=engine, image=image)
+
     if not docker_available():
         print("error: Docker is not installed or not on PATH.", file=sys.stderr)
         print("Install Docker Desktop/Engine, or use Neo4j Aura with:", file=sys.stderr)
@@ -82,16 +131,16 @@ def up(password: str | None = None, connect: bool = True) -> None:
         sys.exit(1)
     if not docker_daemon_available():
         print("error: Docker is installed but the daemon is not reachable.", file=sys.stderr)
-        print("Start Docker, then run: wisdom local up", file=sys.stderr)
+        print("Start Docker Desktop/Engine, then run: wisdom local up", file=sys.stderr)
         sys.exit(1)
 
-    password = password or _read_or_create_password()
+    password = _resolve_password(password)
 
     if _container_id(all_containers=False):
         print(f"  Local wisdomGraph backend already running ({CONTAINER_NAME})")
         if connect:
             save_connection(URI, USER, password)
-        _print_ready(password)
+        _print_ready(password, selected_image)
         return
 
     if _container_id(all_containers=True):
@@ -102,34 +151,20 @@ def up(password: str | None = None, connect: bool = True) -> None:
             sys.exit(result.returncode)
         if connect:
             save_connection(URI, USER, password)
-        _print_ready(password)
+        _print_ready(password, selected_image)
         return
 
     _ensure_dirs()
 
-    print(f"  Pulling {IMAGE}...")
-    result = _run(["docker", "pull", IMAGE], capture=True)
+    print(f"  Pulling {selected_image}...")
+    result = _run(["docker", "pull", selected_image], capture=True)
     if result.returncode != 0:
-        print(result.stderr.strip() or "error: failed to pull DozerDB image", file=sys.stderr)
+        print(result.stderr.strip() or f"error: failed to pull {selected_image}", file=sys.stderr)
+        print("Check Docker Hub access/proxy settings, then retry: wisdom local up", file=sys.stderr)
         sys.exit(result.returncode)
 
     print(f"  Starting managed local backend ({CONTAINER_NAME})...")
-    result = _run([
-        "docker", "run", "-d",
-        "--name", CONTAINER_NAME,
-        "-p", f"{HTTP_PORT}:7474",
-        "-p", f"{BOLT_PORT}:7687",
-        "-v", f"{BASE_DIR}/data:/data",
-        "-v", f"{BASE_DIR}/logs:/logs",
-        "-v", f"{BASE_DIR}/import:/var/lib/neo4j/import",
-        "-v", f"{BASE_DIR}/plugins:/plugins",
-        "--env", f"NEO4J_AUTH=neo4j/{password}",
-        "--env", "NEO4J_PLUGINS=[\"apoc\"]",
-        "--env", "NEO4J_apoc_export_file_enabled=true",
-        "--env", "NEO4J_apoc_import_file_enabled=true",
-        "--env", "NEO4J_dbms_security_procedures_unrestricted=*",
-        IMAGE,
-    ], capture=True)
+    result = _run(_docker_run_args(selected_image, password), capture=True)
     if result.returncode != 0:
         print(result.stderr.strip() or "error: failed to start local backend", file=sys.stderr)
         sys.exit(result.returncode)
@@ -140,7 +175,7 @@ def up(password: str | None = None, connect: bool = True) -> None:
 
     if connect:
         save_connection(URI, USER, password)
-    _print_ready(password)
+    _print_ready(password, selected_image)
 
 
 def down() -> None:
@@ -185,13 +220,17 @@ def logs(tail: int = 80) -> None:
         print(result.stderr.rstrip(), file=sys.stderr)
 
 
-def _print_ready(password: str) -> None:
+def _print_ready(password: str, image: str) -> None:
     print()
     print("  wisdomGraph local backend is ready")
     print()
     print(f"  Container: {CONTAINER_NAME}")
+    print(f"  Image:     {image}")
     print(f"  Browser:   http://localhost:{HTTP_PORT}")
     print(f"  Bolt URI:  {URI}")
     print(f"  User:      {USER}")
-    print(f"  Password:  stored in {PASSWORD_PATH}")
+    if password == DEFAULT_PASSWORD:
+        print(f"  Password:  {password}")
+    else:
+        print(f"  Password:  stored in {PASSWORD_PATH}")
     print()

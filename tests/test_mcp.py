@@ -665,6 +665,32 @@ def test_mcp_install_rejects_unknown_host():
 
 # ── local backend / quickstart CLI ────────────────────────────────────────────
 
+def test_local_default_image_is_official_neo4j(monkeypatch):
+    import wisdom.local as local
+
+    monkeypatch.delenv("WISDOM_NEO4J_IMAGE", raising=False)
+    monkeypatch.delenv("WISDOM_NEO4J_ENGINE", raising=False)
+
+    assert local._select_image() == "neo4j:latest"
+
+
+def test_local_dozerdb_engine_is_explicit():
+    import wisdom.local as local
+
+    assert local._select_image(engine="dozerdb") == "graphstack/dozerdb:5.26.3.0"
+
+
+def test_local_docker_run_args_are_shell_independent(tmp_path, monkeypatch):
+    import wisdom.local as local
+
+    monkeypatch.setattr(local, "BASE_DIR", tmp_path / "neo4j")
+    args = local._docker_run_args("neo4j:latest", "password")
+
+    assert args[:3] == ["docker", "run", "-d"]
+    assert "neo4j:latest" == args[-1]
+    assert "NEO4J_AUTH=neo4j/password" in args
+    assert all(isinstance(part, str) for part in args)
+
 def test_local_up_starts_managed_backend_without_existing_container(tmp_path, monkeypatch):
     import wisdom.local as local
 
@@ -722,7 +748,7 @@ def test_quickstart_local_registers_requested_host(monkeypatch):
          patch("wisdom.__main__._install_mcp") as install_mcp:
         _run_quickstart()
 
-    local_up.assert_called_once_with()
+    local_up.assert_called_once_with(password=None, image=None, engine=None)
     doctor.assert_called_once_with(connect_only=True)
     install_mcp.assert_called_once_with(host="codex")
 
