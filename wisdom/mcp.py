@@ -325,16 +325,48 @@ _TOOL_DEFS: list[dict] = [
 
 # ── Handler helpers ───────────────────────────────────────────────────────────
 
-def _get_driver():
-    """Return a live Neo4j driver (or raise RuntimeError with a helpful message)."""
+_CONNECT_HELP = (
+    "Cannot connect to Neo4j, and a managed local backend could not be started "
+    "automatically (Docker not available). Run `wisdom quickstart` to provision a "
+    "local backend, or `wisdom connect <uri> --user <u> --password <p>` to point at "
+    "an existing Neo4j/DozerDB/Aura instance."
+)
+
+
+def _try_autostart_local() -> bool:
+    """Best-effort: bring up the managed local backend when Docker is available.
+
+    Runs silently — stdout is redirected to stderr so `local.up`'s progress output
+    never corrupts the MCP stdio (JSON-RPC) stream. Returns True if it started.
+    """
+    import contextlib
+
     try:
-        from .connect import get_driver
+        from . import local
+    except Exception:
+        return False
+    if not local.docker_daemon_available():
+        return False
+    try:
+        with contextlib.redirect_stdout(sys.stderr):
+            local.up(connect=True)
+        return True
+    except SystemExit:
+        return False
+
+
+def _get_driver(_allow_autostart: bool = True):
+    """Return a live Neo4j driver (or raise RuntimeError with a helpful message)."""
+    from .connect import get_driver
+    try:
         return get_driver()
     except SystemExit as e:
-        raise RuntimeError(
-            "Cannot connect to Neo4j. Make sure your configured Neo4j or DozerDB instance "
-            "is running and credentials are configured (`wisdom connect`)."
-        ) from e
+        if _allow_autostart and _try_autostart_local():
+            try:
+                return get_driver()
+            except SystemExit as e2:
+                raise RuntimeError(_CONNECT_HELP) from e2
+        raise RuntimeError(_CONNECT_HELP) from e
 
 
 # ── Tool handlers (pure Python — no mcp types needed) ────────────────────────

@@ -115,6 +115,43 @@ def _wait_for_port(timeout_s: int = 45) -> bool:
     return False
 
 
+def _probe_cypher(password: str) -> bool:
+    """One-shot: can we run an authenticated `RETURN 1` yet?
+
+    Neo4j opens the Bolt port several seconds before it accepts
+    authenticated queries, so a TCP connect is not proof of readiness.
+    """
+    try:
+        from neo4j import GraphDatabase
+    except ImportError:
+        # Driver not installed here; the TCP probe is the best we can do.
+        return True
+    driver = None
+    try:
+        driver = GraphDatabase.driver(URI, auth=(USER, password))
+        driver.verify_connectivity()
+        with driver.session() as session:
+            session.run("RETURN 1").consume()
+        return True
+    except Exception:
+        return False
+    finally:
+        if driver is not None:
+            driver.close()
+
+
+def _wait_until_ready(password: str, timeout_s: int = 90) -> bool:
+    """Wait until Neo4j accepts an authenticated query, not just a TCP socket."""
+    if not _wait_for_port(timeout_s=min(timeout_s, 45)):
+        return False
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        if _probe_cypher(password):
+            return True
+        time.sleep(1)
+    return False
+
+
 def up(
     password: str | None = None,
     connect: bool = True,
@@ -134,21 +171,34 @@ def up(
         print("Start Docker Desktop/Engine, then run: wisdom local up", file=sys.stderr)
         sys.exit(1)
 
-    password = _resolve_password(password)
+    running = _container_id(all_containers=False)
+    exists = bool(running) or bool(_container_id(all_containers=True))
 
-    if _container_id(all_containers=False):
+    if exists:
+        # A container's NEO4J_AUTH is fixed at creation time; a new --password
+        # cannot change it, so reuse the saved one and warn on a mismatch.
+        saved = _read_or_create_password()
+        if password and password != saved:
+            print("  note: a local backend already exists — keeping its existing password.", file=sys.stderr)
+            print(f"        To reset it: wisdom local down && docker rm {CONTAINER_NAME}, then rerun.", file=sys.stderr)
+        password = saved
+    else:
+        password = _resolve_password(password)
+
+    if running:
         print(f"  Local wisdomGraph backend already running ({CONTAINER_NAME})")
         if connect:
             save_connection(URI, USER, password)
         _print_ready(password, selected_image)
         return
 
-    if _container_id(all_containers=True):
+    if exists:
         print(f"  Starting existing local backend ({CONTAINER_NAME})...")
         result = _run(["docker", "start", CONTAINER_NAME], capture=True)
         if result.returncode != 0:
             print(result.stderr.strip() or "error: failed to start local backend", file=sys.stderr)
             sys.exit(result.returncode)
+        _report_if_not_ready(password)
         if connect:
             save_connection(URI, USER, password)
         _print_ready(password, selected_image)
@@ -156,10 +206,10 @@ def up(
 
     _ensure_dirs()
 
-    print(f"  Pulling {selected_image}...")
-    result = _run(["docker", "pull", selected_image], capture=True)
+    print(f"  Pulling {selected_image} (first run may take a minute)...")
+    result = _run(["docker", "pull", selected_image])  # stream progress to the user
     if result.returncode != 0:
-        print(result.stderr.strip() or f"error: failed to pull {selected_image}", file=sys.stderr)
+        print(f"error: failed to pull {selected_image}", file=sys.stderr)
         print("Check Docker Hub access/proxy settings, then retry: wisdom local up", file=sys.stderr)
         sys.exit(result.returncode)
 
@@ -169,13 +219,18 @@ def up(
         print(result.stderr.strip() or "error: failed to start local backend", file=sys.stderr)
         sys.exit(result.returncode)
 
-    if not _wait_for_port():
-        print("warning: local backend started, but Bolt was not reachable before timeout.", file=sys.stderr)
-        print("Run `wisdom local logs` or `wisdom doctor` if connection fails.", file=sys.stderr)
+    print("  Waiting for Neo4j to accept connections...")
+    _report_if_not_ready(password)
 
     if connect:
         save_connection(URI, USER, password)
     _print_ready(password, selected_image)
+
+
+def _report_if_not_ready(password: str) -> None:
+    if not _wait_until_ready(password):
+        print("warning: local backend started, but Neo4j was not ready before timeout.", file=sys.stderr)
+        print("Run `wisdom local logs` or `wisdom doctor` if connection fails.", file=sys.stderr)
 
 
 def down() -> None:

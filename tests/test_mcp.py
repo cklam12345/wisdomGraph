@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import sys
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -711,7 +712,7 @@ def test_local_up_starts_managed_backend_without_existing_container(tmp_path, mo
 
     with patch("wisdom.local.shutil.which", return_value="/usr/bin/docker"), \
          patch("wisdom.local._run", side_effect=fake_run), \
-         patch("wisdom.local._wait_for_port", return_value=True), \
+         patch("wisdom.local._wait_until_ready", return_value=True), \
          patch("wisdom.local.save_connection") as save:
         local.up(password="test-password")
 
@@ -729,14 +730,44 @@ def test_local_up_reuses_existing_running_backend(tmp_path, monkeypatch):
             return SimpleNamespace(returncode=0, stdout="abc123\n", stderr="")
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
-    monkeypatch.setattr(local, "PASSWORD_PATH", tmp_path / "local-password")
+    pw_path = tmp_path / "local-password"
+    pw_path.write_text("stored-secret\n", encoding="utf-8")
+    monkeypatch.setattr(local, "PASSWORD_PATH", pw_path)
 
     with patch("wisdom.local.shutil.which", return_value="/usr/bin/docker"), \
          patch("wisdom.local._run", side_effect=fake_run), \
          patch("wisdom.local.save_connection") as save:
         local.up(password="test-password")
 
-    save.assert_called_once_with(local.URI, local.USER, "test-password")
+    # An existing container keeps its baked-in password; --password is ignored.
+    save.assert_called_once_with(local.URI, local.USER, "stored-secret")
+
+
+def test_wait_until_ready_fails_when_port_never_opens():
+    import wisdom.local as local
+
+    with patch("wisdom.local._wait_for_port", return_value=False), \
+         patch("wisdom.local._probe_cypher") as probe:
+        assert local._wait_until_ready("password", timeout_s=1) is False
+    probe.assert_not_called()
+
+
+def test_wait_until_ready_waits_for_cypher_after_port_opens():
+    import wisdom.local as local
+
+    # Port is open immediately, but Cypher is only ready on the 2nd probe.
+    with patch("wisdom.local._wait_for_port", return_value=True), \
+         patch("wisdom.local._probe_cypher", side_effect=[False, True]), \
+         patch("wisdom.local.time.sleep"):
+        assert local._wait_until_ready("password", timeout_s=5) is True
+
+
+def test_probe_cypher_is_graceful_without_neo4j_driver(monkeypatch):
+    import wisdom.local as local
+
+    # Simulate the neo4j driver not being importable in this environment.
+    monkeypatch.setitem(sys.modules, "neo4j", None)
+    assert local._probe_cypher("password") is True
 
 
 def test_quickstart_local_registers_requested_host(monkeypatch):
@@ -763,3 +794,53 @@ def test_quickstart_existing_requires_uri(monkeypatch):
 
     with pytest.raises(SystemExit):
         _run_quickstart()
+
+
+# ── MCP driver auto-start ──────────────────────────────────────────────────────
+
+def test_get_driver_autostarts_local_backend_on_first_failure():
+    import wisdom.mcp as mcp
+
+    good_driver = object()
+    # First get_driver() fails (nothing running); after autostart, it succeeds.
+    get_driver = MagicMock(side_effect=[SystemExit(1), good_driver])
+
+    with patch("wisdom.connect.get_driver", get_driver), \
+         patch("wisdom.mcp._try_autostart_local", return_value=True) as autostart:
+        assert mcp._get_driver() is good_driver
+
+    autostart.assert_called_once()
+    assert get_driver.call_count == 2
+
+
+def test_get_driver_raises_helpful_error_when_autostart_unavailable():
+    import wisdom.mcp as mcp
+
+    get_driver = MagicMock(side_effect=SystemExit(1))
+
+    with patch("wisdom.connect.get_driver", get_driver), \
+         patch("wisdom.mcp._try_autostart_local", return_value=False):
+        with pytest.raises(RuntimeError) as exc:
+            mcp._get_driver()
+
+    assert "quickstart" in str(exc.value)
+    # Only the initial attempt — no retry when autostart could not run.
+    assert get_driver.call_count == 1
+
+
+def test_try_autostart_local_skips_when_docker_absent():
+    import wisdom.mcp as mcp
+
+    with patch("wisdom.local.docker_daemon_available", return_value=False), \
+         patch("wisdom.local.up") as up:
+        assert mcp._try_autostart_local() is False
+    up.assert_not_called()
+
+
+def test_try_autostart_local_starts_backend_when_docker_present():
+    import wisdom.mcp as mcp
+
+    with patch("wisdom.local.docker_daemon_available", return_value=True), \
+         patch("wisdom.local.up") as up:
+        assert mcp._try_autostart_local() is True
+    up.assert_called_once_with(connect=True)
