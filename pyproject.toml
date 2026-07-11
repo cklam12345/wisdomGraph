@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wisdomgraph"
-version = "0.3.2"
+version = "0.3.3"
 description = "Graph-native persistent cognition for AI agents using Neo4j, DIKW, and MCP"
 readme = "README.md"
 license = {text = "MIT"}

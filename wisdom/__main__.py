@@ -8,11 +8,51 @@ import shutil
 import sys
 from pathlib import Path
 
+# Baked into the source so it identifies the code actually running, independent
+# of whatever distribution metadata happens to resolve on sys.path. Keep in sync
+# with pyproject.toml (guarded by test_code_version_matches_pyproject).
+_CODE_VERSION = "0.3.3"
+
 try:
     from importlib.metadata import version as _pkg_version
     __version__ = _pkg_version("wisdomgraph")
 except Exception:
     __version__ = "unknown"
+
+
+def _dist_version() -> str:
+    """Version of the installed `wisdomgraph` distribution metadata (may differ
+    from the running code if more than one install is on PATH)."""
+    try:
+        from importlib.metadata import version
+        return version("wisdomgraph")
+    except Exception:
+        return "unknown"
+
+
+def _print_version() -> None:
+    print(f"wisdomgraph {_CODE_VERSION}")
+    dist = _dist_version()
+    if dist not in (_CODE_VERSION, "unknown"):
+        print(
+            f"  note: installed distribution metadata reports {dist} — "
+            "more than one wisdomgraph install is on PATH.",
+            file=sys.stderr,
+        )
+
+
+def _warn_if_stale() -> None:
+    """Warn when the running code and the installed distribution disagree — the
+    classic 'wisdom on PATH is an old shim' trap."""
+    dist = _dist_version()
+    if dist not in (_CODE_VERSION, "unknown"):
+        print(
+            f"warning: this 'wisdom' runs code v{_CODE_VERSION} but the installed "
+            f"wisdomgraph distribution is v{dist} — you likely have more than one "
+            "install on PATH.",
+            file=sys.stderr,
+        )
+        print("  Fix: pip install -U wisdomgraph   (check with: which -a wisdom)", file=sys.stderr)
 
 
 # ── Hook / registration strings ──────────────────────────────────────────────
@@ -380,6 +420,15 @@ def main() -> None:
 
     cmd = sys.argv[1]
 
+    if cmd in ("--version", "-V", "version"):
+        _print_version()
+        return
+
+    # Surface stale-install mismatches, but never on `mcp` — that speaks JSON-RPC
+    # over stdio and its stderr is reserved for the host's logs.
+    if cmd != "mcp":
+        _warn_if_stale()
+
     if cmd == "install":
         default_p = "windows" if _platform_mod.system() == "Windows" else "claude"
         chosen = default_p
@@ -634,6 +683,8 @@ def _print_explain(result: dict) -> None:
 
 def _print_help() -> None:
     print("Usage: wisdom <command>")
+    print()
+    print("  --version                       print the running wisdomgraph version")
     print()
     print("Setup:")
     print("  quickstart [--storage local|aura|existing] [--host claude|codex|all|none]")
