@@ -844,3 +844,56 @@ def test_try_autostart_local_starts_backend_when_docker_present():
          patch("wisdom.local.up") as up:
         assert mcp._try_autostart_local() is True
     up.assert_called_once_with(connect=True)
+
+
+# ── version / stale-install self-check ─────────────────────────────────────────
+
+def test_version_command_prints_code_version(monkeypatch, capsys):
+    import wisdom.__main__ as m
+
+    monkeypatch.setattr(sys, "argv", ["wisdom", "--version"])
+    m.main()
+    assert f"wisdomgraph {m._CODE_VERSION}" in capsys.readouterr().out
+
+
+def test_code_version_matches_pyproject():
+    import re
+    from pathlib import Path
+    import wisdom.__main__ as m
+
+    root = Path(__file__).resolve().parent.parent
+    text = (root / "pyproject.toml").read_text(encoding="utf-8")
+    match = re.search(r'(?m)^version\s*=\s*"([^"]+)"', text)
+    assert match, "version not found in pyproject.toml"
+    assert match.group(1) == m._CODE_VERSION, "bump _CODE_VERSION to match pyproject.toml"
+
+
+def test_warn_if_stale_warns_on_version_mismatch(capsys):
+    import wisdom.__main__ as m
+
+    with patch.object(m, "_dist_version", return_value="0.2.0"):
+        m._warn_if_stale()
+    err = capsys.readouterr().err
+    assert "0.2.0" in err
+    assert "pip install -U wisdomgraph" in err
+
+
+def test_warn_if_stale_silent_when_matching_or_unknown(capsys):
+    import wisdom.__main__ as m
+
+    with patch.object(m, "_dist_version", return_value=m._CODE_VERSION):
+        m._warn_if_stale()
+    with patch.object(m, "_dist_version", return_value="unknown"):
+        m._warn_if_stale()
+    assert capsys.readouterr().err == ""
+
+
+def test_main_skips_stale_check_for_mcp(monkeypatch):
+    import wisdom.__main__ as m
+
+    monkeypatch.setattr(sys, "argv", ["wisdom", "mcp"])
+    with patch.object(m, "_warn_if_stale") as warn, \
+         patch("wisdom.mcp.run_mcp_server") as run:
+        m.main()
+    warn.assert_not_called()
+    run.assert_called_once()
