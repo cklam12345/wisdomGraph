@@ -1,18 +1,18 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=68,<77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "wisdomgraph"
-version = "0.2.0"
-description = "Accumulative Neo4j-native DIKW wisdom memory for AI coding assistants (Claude Code, OpenClaw)"
+version = "0.3.2"
+description = "Graph-native persistent cognition for AI agents using Neo4j, DIKW, and MCP"
 readme = "README.md"
-license = "MIT"
-license-files = ["LICENSE"]
+license = {text = "MIT"}
 keywords = [
     "claude", "claude-code", "openclaw", "neo4j", "knowledge-graph",
     "graphrag", "dikw", "wisdom", "memory", "accumulative", "llm",
-    "skill", "agent-memory", "dozerdb", "mcp", "model-context-protocol",
+    "skill", "agent-memory", "agentic-memory", "multi-agent", "dozerdb",
+    "mcp", "model-context-protocol", "codex",
 ]
 requires-python = ">=3.10"
 dependencies = [

@@ -154,7 +154,19 @@ def _install_claude_hook(project_dir: Path) -> None:
     print("  .claude/settings.json  ->  PreToolUse hook registered")
 
 
-def _install_mcp(project_dir: Path | None = None) -> None:
+def _install_mcp(project_dir: Path | None = None, host: str = "claude") -> None:
+    """Register wisdomGraph as an MCP server for a supported host."""
+    host = host.lower()
+    if host == "claude":
+        _install_claude_mcp(project_dir)
+    elif host == "codex":
+        _install_codex_mcp()
+    else:
+        print("error: unknown MCP host. Choose: claude, codex", file=sys.stderr)
+        sys.exit(1)
+
+
+def _install_claude_mcp(project_dir: Path | None = None) -> None:
     """Register wisdomGraph as an MCP server in .claude/settings.json."""
     target_dir = project_dir or Path(".")
     settings_path = target_dir / ".claude" / "settings.json"
@@ -178,7 +190,157 @@ def _install_mcp(project_dir: Path | None = None) -> None:
     print(f"  .claude/settings.json  ->  wisdomGraph MCP server registered")
     print()
     print("Claude Code will now call wisdomGraph tools directly:")
-    print("  wisdom_ingest, wisdom_remember, wisdom_query, wisdom_reflect, wisdom_report")
+    print("  wisdom_ingest, wisdom_remember, wisdom_learn, wisdom_status, wisdom_list,")
+    print("  wisdom_trace, wisdom_explain, wisdom_query, wisdom_reflect, wisdom_report")
+
+
+def _install_codex_mcp() -> None:
+    """Register wisdomGraph as a global Codex MCP server."""
+    import subprocess
+
+    if not shutil.which("codex"):
+        print("error: codex CLI not found on PATH.", file=sys.stderr)
+        print("Install Codex or run manually: codex mcp add wisdomGraph -- wisdom mcp", file=sys.stderr)
+        sys.exit(1)
+
+    existing = subprocess.run(
+        ["codex", "mcp", "get", "wisdomGraph"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    if existing.returncode == 0:
+        print("  Codex MCP       ->  wisdomGraph already registered (no change)")
+        return
+
+    result = subprocess.run(
+        ["codex", "mcp", "add", "wisdomGraph", "--", "wisdom", "mcp"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        print("error: failed to register wisdomGraph with Codex.", file=sys.stderr)
+        if result.stderr:
+            print(result.stderr.strip(), file=sys.stderr)
+        print("Run manually: codex mcp add wisdomGraph -- wisdom mcp", file=sys.stderr)
+        sys.exit(result.returncode)
+
+    print("  Codex MCP       ->  wisdomGraph registered globally")
+    print()
+    print("Codex will launch wisdomGraph with:")
+    print("  wisdom mcp")
+
+
+def _detect_hosts() -> list[str]:
+    hosts: list[str] = []
+    if Path.home().joinpath(".claude").exists() or shutil.which("claude"):
+        hosts.append("claude")
+    if shutil.which("codex"):
+        hosts.append("codex")
+    return hosts
+
+
+def _expand_hosts(host: str) -> list[str]:
+    host = host.lower()
+    if host == "none":
+        return []
+    if host == "all":
+        hosts = _detect_hosts()
+        return hosts or ["claude"]
+    if host in {"claude", "codex"}:
+        return [host]
+    print("error: unknown host. Choose: claude, codex, all, none", file=sys.stderr)
+    sys.exit(1)
+
+
+def _run_quickstart() -> None:
+    """First-time setup: storage plus optional MCP registration."""
+    storage = _get_arg("--storage", "local").lower()
+    host_arg = _get_arg("--host", "all")
+    hosts = _expand_hosts(host_arg)
+
+    print("wisdomGraph quickstart")
+    print()
+
+    if storage == "local":
+        from wisdom.local import up as local_up
+        local_up(
+            password=_get_arg("--password", None),
+            image=_get_arg("--image", None),
+            engine=_get_arg("--engine", None),
+        )
+    elif storage in {"aura", "existing"}:
+        uri = _get_arg("--uri", "")
+        user = _get_arg("--user", "neo4j")
+        password = _get_arg("--password", "")
+        if not uri:
+            print(f"error: --uri is required for --storage {storage}", file=sys.stderr)
+            sys.exit(1)
+        if not password:
+            import getpass
+            password = getpass.getpass("Neo4j password: ")
+        from wisdom.connect import save_connection
+        save_connection(uri, user, password)
+    else:
+        print("error: unknown storage. Choose: local, aura, existing", file=sys.stderr)
+        sys.exit(1)
+
+    _doctor(connect_only=True)
+
+    for host in hosts:
+        _install_mcp(host=host)
+
+    print()
+    print("wisdomGraph is ready.")
+    if hosts:
+        print(f"MCP hosts: {', '.join(hosts)}")
+        print("Start a new agent session so it can discover the MCP tools.")
+    else:
+        print("MCP registration skipped. Run `wisdom mcp-install --host <host>` later.")
+
+
+def _doctor(connect_only: bool = False) -> None:
+    """Check local setup without mutating Docker or graph state."""
+    print("wisdomGraph doctor")
+    print()
+
+    from wisdom.connect import _load_config
+    cfg = _load_config()
+    print(f"Config: {Path.home() / '.wisdom' / 'config.json'}")
+    print(f"Neo4j URI: {cfg.get('neo4j_uri', 'not configured')}")
+    print(f"Neo4j user: {cfg.get('neo4j_user', 'not configured')}")
+    print(f"Password env: {cfg.get('neo4j_password_env', 'WISDOM_NEO4J_PASSWORD')}")
+
+    try:
+        from wisdom.connect import ensure_schema, get_driver, status as graph_status
+        driver = get_driver()
+        ensure_schema(driver)
+        stats = graph_status(driver)
+        driver.close()
+        print("Connection: ok")
+        print(
+            "Graph: "
+            f"{stats.get('Knowledge', 0)} Knowledge, "
+            f"{stats.get('Experience', 0)} Experience, "
+            f"{stats.get('Insight', 0)} Insight, "
+            f"{stats.get('Wisdom', 0)} Wisdom, "
+            f"{stats.get('edges', 0)} edges"
+        )
+    except SystemExit:
+        print("Connection: failed")
+        if connect_only:
+            raise
+    if connect_only:
+        return
+
+    print()
+    from wisdom.local import docker_available, docker_daemon_available
+    print(f"Docker installed: {'yes' if docker_available() else 'no'}")
+    print(f"Docker daemon:    {'yes' if docker_daemon_available() else 'no'}")
+
+    hosts = _detect_hosts()
+    print(f"MCP hosts found:  {', '.join(hosts) if hosts else 'none detected'}")
 
 
 def claude_install(project_dir: Path | None = None) -> None:
@@ -238,9 +400,35 @@ def main() -> None:
         run_mcp_server()
 
     elif cmd == "mcp-install":
-        # Register MCP server in .claude/settings.json
+        # Register MCP server with a supported host.
         project = _get_arg("--project", None)
-        _install_mcp(Path(project) if project else None)
+        host = _get_arg("--host", "claude")
+        _install_mcp(Path(project) if project else None, host=host)
+
+    elif cmd == "quickstart":
+        _run_quickstart()
+
+    elif cmd == "doctor":
+        _doctor()
+
+    elif cmd == "local":
+        from wisdom.local import down as local_down, logs as local_logs, status as local_status, up as local_up
+        subcmd = sys.argv[2] if len(sys.argv) > 2 else ""
+        password = _get_arg("--password", None)
+        image = _get_arg("--image", None)
+        engine = _get_arg("--engine", None)
+        if subcmd == "up":
+            local_up(password=password, image=image, engine=engine)
+        elif subcmd == "down":
+            local_down()
+        elif subcmd == "status":
+            local_status()
+        elif subcmd == "logs":
+            tail = int(_get_arg("--tail", "80"))
+            local_logs(tail=tail)
+        else:
+            print("Usage: wisdom local [up|down|status|logs]", file=sys.stderr)
+            sys.exit(1)
 
     elif cmd == "connect":
         if len(sys.argv) < 3:
@@ -448,14 +636,18 @@ def _print_help() -> None:
     print("Usage: wisdom <command>")
     print()
     print("Setup:")
+    print("  quickstart [--storage local|aura|existing] [--host claude|codex|all|none]")
+    print("  doctor                          check Neo4j, local backend, and MCP host readiness")
     print("  install [--platform P]          copy skill (claude|windows|claw)")
     print("  connect <uri> --user U --pass P  save Neo4j connection")
-    print("  docker up|down|status           manage DozerDB local container")
+    print("  local up [--engine neo4j|dozerdb] [--image IMAGE] [--password P]")
+    print("  docker up|down|status           manage legacy/manual DozerDB container")
     print("  claude install|uninstall        write CLAUDE.md + PreToolUse hook")
     print()
-    print("MCP (Claude Code native integration):")
+    print("MCP:")
     print("  mcp                             start MCP server over stdio")
-    print("  mcp-install [--project <dir>]   register MCP in .claude/settings.json")
+    print("  mcp-install [--project <dir>]   register MCP for Claude Code")
+    print("  mcp-install --host codex        register MCP for Codex")
     print()
     print("Absorb:")
     print("  (use /wisdom in Claude Code — the skill handles absorption)")
