@@ -30,7 +30,7 @@ USER = "neo4j"
 def _run(cmd: list[str], capture: bool = False) -> subprocess.CompletedProcess:
     if capture:
         return subprocess.run(cmd, capture_output=True, text=True, check=False)
-    return subprocess.run(cmd, check=False)
+    return subprocess.run(cmd, stdout=sys.stderr, stderr=sys.stderr, check=False)
 
 
 def docker_available() -> bool:

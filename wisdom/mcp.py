@@ -12,6 +12,7 @@ Configure in .claude/settings.json:
 }
 
 Tools exposed:
+- wisdom_storage     : inspect or switch Relate, Neo4j/Aura, and Docker storage
 - wisdom_ingest      : ingest a file / directory / URL into Neo4j
 - wisdom_remember    : store an explicit knowledge node
 - wisdom_learn       : record an outcome (SUCCEEDED/FAILED/PARTIAL) + lesson learned
@@ -77,6 +78,29 @@ def _err(text: str) -> _Result:
 # ── Tool definitions (plain dicts — no mcp.types.Tool needed at import) ──────
 
 _TOOL_DEFS: list[dict] = [
+    {
+        "name": "wisdom_storage",
+        "description": (
+            "Inspect or switch wisdomGraph storage. Relate is the Docker-free default. "
+            "Switch to neo4j/aura using a saved URI or supplied URI and a password environment variable; "
+            "docker explicitly starts the managed Neo4j/DozerDB container. "
+            "Switch only when requested by the user. Data stays in each backend: this does not migrate, "
+            "copy, delete, or stop the previous database. Changes apply to subsequent tool calls and persist."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["status", "switch"], "default": "status"},
+                "backend": {"type": "string", "enum": ["relate", "neo4j", "aura", "docker"]},
+                "path": {"type": "string", "description": "Relate store path; defaults to the saved graph."},
+                "uri": {"type": "string", "description": "Neo4j/Aura URI; omit to reuse saved connection."},
+                "user": {"type": "string", "description": "Neo4j user (default: saved user or neo4j)."},
+                "password_env": {"type": "string", "description": "Name of an existing server environment variable holding the password. Never pass a password here."},
+                "engine": {"type": "string", "enum": ["neo4j", "dozerdb"], "description": "Docker engine for a new container; existing container is reused."},
+            },
+            "additionalProperties": False,
+        },
+    },
     {
         "name": "wisdom_ingest",
         "description": (
@@ -326,47 +350,20 @@ _TOOL_DEFS: list[dict] = [
 # ── Handler helpers ───────────────────────────────────────────────────────────
 
 _CONNECT_HELP = (
-    "Cannot connect to Neo4j, and a managed local backend could not be started "
-    "automatically (Docker not available). Run `wisdom quickstart` to provision a "
-    "local backend, or `wisdom connect <uri> --user <u> --password <p>` to point at "
-    "an existing Neo4j/DozerDB/Aura instance."
+    "Cannot open graph storage. Run `wisdom doctor` for details or "
+    "`wisdom quickstart` to select embedded storage. For Aura or an existing "
+    "Neo4j instance, use `wisdom connect <uri> --user <u> --password <p>`. "
+    "If an embedded store is locked, close the other writer and retry."
 )
 
 
-def _try_autostart_local() -> bool:
-    """Best-effort: bring up the managed local backend when Docker is available.
-
-    Runs silently — stdout is redirected to stderr so `local.up`'s progress output
-    never corrupts the MCP stdio (JSON-RPC) stream. Returns True if it started.
-    """
-    import contextlib
-
-    try:
-        from . import local
-    except Exception:
-        return False
-    if not local.docker_daemon_available():
-        return False
-    try:
-        with contextlib.redirect_stdout(sys.stderr):
-            local.up(connect=True)
-        return True
-    except SystemExit:
-        return False
-
-
-def _get_driver(_allow_autostart: bool = True):
-    """Return a live Neo4j driver (or raise RuntimeError with a helpful message)."""
+def _get_driver():
+    """Open the configured backend; never replace a failed remote connection."""
     from .connect import get_driver
     try:
         return get_driver()
-    except SystemExit as e:
-        if _allow_autostart and _try_autostart_local():
-            try:
-                return get_driver()
-            except SystemExit as e2:
-                raise RuntimeError(_CONNECT_HELP) from e2
-        raise RuntimeError(_CONNECT_HELP) from e
+    except (SystemExit, Exception) as exc:
+        raise RuntimeError(_CONNECT_HELP) from exc
 
 
 # ── Tool handlers (pure Python — no mcp types needed) ────────────────────────
@@ -903,7 +900,19 @@ def _handle_report(args: dict[str, Any]) -> _Result:
     return _ok(md)
 
 
+def _handle_storage(args: dict[str, Any]) -> _Result:
+    from .storage import control
+    try:
+        return _ok(control(args))
+    except ValueError as exc:
+        return _err(str(exc))
+    except (SystemExit, Exception):
+        return _err("Storage switch failed; the previous selection is unchanged. Check the target's availability, "
+                    "credentials/environment, or store lock. Docker may have started; existing data is retained.")
+
+
 _HANDLERS = {
+    "wisdom_storage": _handle_storage,
     "wisdom_ingest":   _handle_ingest,
     "wisdom_remember": _handle_remember,
     "wisdom_learn":    _handle_learn,

@@ -13,7 +13,7 @@
 >
 > **graphify gives you a snapshot. wisdomGraph gives you memory that compounds.**
 
-Use wisdomGraph from Claude Code, Codex, OpenClaw, or any MCP host. Feed it your codebases, notes, papers, conversations — every run **merges** into a living Neo4j graph. The graph doesn't reset. It accumulates. Facts become patterns. Patterns become insights. Insights become wisdom.
+Use wisdomGraph from Claude Code, Codex, OpenClaw, or any MCP host. Feed it your codebases, notes, papers, conversations — every run **merges** into a persistent graph — embedded Relate by Neo4j locally, or Neo4j Aura in the cloud. The graph doesn't reset. It accumulates. Facts become patterns. Patterns become insights. Insights become wisdom.
 
 ```
 /wisdom .                      # absorb this project into the wisdom graph
@@ -31,14 +31,14 @@ wisdomGraph does something fundamentally different.
 
 | | graphify | wisdomGraph |
 |---|---|---|
-| **Storage** | `graph.json` file (per-project) | Neo4j (persistent, all projects) |
+| **Storage** | `graph.json` file (per-project) | Relate or Neo4j (persistent, all projects) |
 | **Node types** | flat (code entities, concepts) | typed DIKW: Knowledge / Experience / Insight / Wisdom |
 | **Runs** | snapshot, overwrites | MERGE — each run grows the graph |
 | **Query** | read GRAPH_REPORT.md | live Cypher traversal at inference time |
 | **Memory** | resets each session | accumulates across sessions, projects, months |
 | **Reasoning** | community detection (topology) | graph path traversal + DIKW hierarchy |
 | **Feedback loop** | none | Wisdom → Knowledge (neuroplasticity) |
-| **Database** | none required | Neo4j Aura (free) or local Neo4j Docker |
+| **Database** | none required | Embedded Relate (no Docker) or Neo4j Aura |
 
 The difference is not incremental. It's architectural. graphify compresses a codebase into a readable report. wisdomGraph builds an artificial epistemology — one that remembers, connects, and grows.
 
@@ -68,17 +68,17 @@ The feedback loop is critical: when a Wisdom node is queried and found useful, i
 
 **Requires:** Python 3.10+ and one of: [Claude Code](https://claude.ai/code), [Codex](https://openai.com/codex), [OpenClaw](https://openclaw.ai), or another MCP host
 
-**And one of:** [Neo4j Aura Free](https://neo4j.com/cloud/platform/aura-graph-database/) (cloud, no install) or Docker Desktop/Engine for a managed local Neo4j container
+**No Docker, Java, database server, or cloud account required.** The Python package includes [Relate by Neo4j](https://relatedb.ai), an embedded graph engine. Aura and existing Neo4j servers remain supported.
 
 ```bash
 pip install 'wisdomgraph[mcp]'
 wisdom quickstart
 ```
 
-`wisdom quickstart` is the end-to-end first-time setup. It prepares storage, verifies the Neo4j connection, and registers wisdomGraph with detected MCP hosts.
+`wisdom quickstart` is the end-to-end first-time setup. It prepares storage, verifies graph storage, and registers wisdomGraph with detected MCP hosts.
 
 ```bash
-# Local managed Neo4j backend + detected MCP hosts
+# Embedded persistent graph + detected MCP hosts
 wisdom quickstart
 
 # Local backend + Codex only
@@ -91,24 +91,39 @@ wisdom quickstart --storage existing --uri bolt://localhost:7689 --user neo4j --
 wisdom quickstart --storage aura --uri bolt+s://xxxxxxxx.databases.neo4j.io --user neo4j --password <password>
 ```
 
-The MCP server itself never starts Docker or creates databases. Storage setup is explicit through `quickstart`, `local`, `docker`, or `connect`.
+New installations default to `~/.wisdom/graph.rl`. Existing saved Neo4j/Aura connections remain selected until you explicitly run local quickstart or connect to another backend. Switching storage does **not** migrate existing data.
 
-### Option A — Managed local backend (recommended first run)
+### Option A — Embedded Relate (default)
 
 ```bash
-wisdom local up
+wisdom quickstart --host codex
+# Choose a different graph file, with no MCP registration:
+wisdom quickstart --path ./my-memory.rl --host none
 wisdom doctor
 ```
 
-This starts a managed `neo4j:latest` container named `wisdomgraph-neo4j`, stores data under `~/.wisdom/neo4j`, uses the documented local login `neo4j/password`, saves the connection, and leaves MCP startup cleanly separate. The implementation uses the Docker CLI directly, so the same `wisdom local up` command works from Windows PowerShell, Windows cmd.exe, macOS Terminal, and Ubuntu Terminal after Docker is installed.
+Relate runs inside Python and persists the graph locally. No credentials or background service are needed. Sessions release the store when finished, including on errors. The MCP server never starts Docker or replaces a failed Aura connection with a local graph.
 
-Useful commands:
+The graph must fit in RAM, and only one process can open the store for writing at a time. Concurrent agent processes can encounter a storage-lock error; close the other writer and retry, or use Aura for shared access. Back up the graph file while no session has it open. See [Relate's documented limits](https://relatedb.ai/docs/reference/limitations/).
 
-```bash
-wisdom local status
-wisdom local logs
-wisdom local down
+For an optional managed Docker server, use `wisdom quickstart --storage docker`; existing `wisdom local up|status|logs|down` commands still manage Docker.
+
+### Switch storage through MCP (0.3.4)
+
+Ask your agent: “Show my WisdomGraph storage”, “Switch WisdomGraph back to Docker”, or “Use embedded Relate again”. The `wisdom_storage` tool supports:
+
+```json
+{"action": "status"}
+{"action": "switch", "backend": "relate"}
+{"action": "switch", "backend": "docker", "engine": "neo4j"}
+{"action": "switch", "backend": "docker", "engine": "dozerdb"}
+{"action": "switch", "backend": "neo4j"}
+{"action": "switch", "backend": "aura", "uri": "neo4j+s://YOUR-HOST", "password_env": "WISDOM_NEO4J_PASSWORD"}
 ```
+
+For remote storage, set the password environment variable in the MCP server's environment before starting it. Do not send passwords in chat/tool arguments. Omitting the URI reuses the saved remote connection. Docker uses its managed password file and reuses an existing container; choosing an engine does not replace that container.
+
+The target must pass connectivity and schema checks before the saved selection changes. Subsequent calls use the new backend without restarting MCP. Each backend retains its own data: switching does not migrate graphs, delete files, or stop containers. Legacy manually created DozerDB containers remain accessible through `backend: "neo4j"` and their URI. Managed Docker expects ports 7474/7687 to be available.
 
 ### Option B — Neo4j Aura (zero local database)
 
@@ -209,6 +224,7 @@ Start a new Codex session. Codex can now launch `wisdom mcp` and use the same Ne
 | `wisdom_ingest` | Absorb a file, directory, or URL into Neo4j |
 | `wisdom_remember` | Store a fact, decision, or insight explicitly |
 | `wisdom_learn` | Record an attempt, outcome, and lesson learned |
+| `wisdom_storage` | Inspect or switch embedded, Neo4j/Aura, and Docker storage |
 | `wisdom_status` | Read DIKW tier counts and edge/source totals |
 | `wisdom_list` | List nodes by DIKW tier, project, and connectivity |
 | `wisdom_trace` | Trace why an insight or wisdom node exists |
@@ -354,20 +370,20 @@ Confidence flows through the graph. An Insight grounded in 8 Experiences has hig
 
 ## Deployment options
 
-| | Aura Free | DozerDB Local |
-|---|---|---|
-| **Setup** | 3 clicks + URI | 1 docker command |
-| **Cost** | Free (200K nodes) | Free forever |
-| **APOC** | Available | Included |
-| **Data location** | Neo4j cloud | Your machine |
-| **Visual browser** | neo4j.com console | localhost:7474 |
-| **Best for** | Quick start, individuals | Teams, air-gap, full control |
+| | Embedded Relate | Neo4j Aura | Docker (optional) |
+|---|---|---|---|
+| **Setup** | `wisdom quickstart` | `wisdom connect <uri> ...` | `wisdom quickstart --storage docker` |
+| **Data location** | Local graph file | Neo4j cloud | Local container volume |
+| **Server required** | No | Managed by Neo4j | Yes |
+| **Best for** | Personal agent memory, local development | Shared access and larger deployments | Existing server workflows |
+
+Relate is a separate engine from Neo4j Server. WisdomGraph uses its Python API and Cypher; server-specific procedures and arbitrary user Cypher may differ. The integration is pinned to Relate 1.2.0 and tested against real persistent stores.
 
 ---
 
 ## Privacy
 
-wisdomGraph sends file contents to your AI coding assistant's model API for semantic extraction — Anthropic (Claude Code) or whichever provider your platform uses. Code files are processed locally via tree-sitter AST. All graph data lives in *your* Neo4j instance (Aura or local). No telemetry, no usage tracking, no analytics.
+wisdomGraph sends file contents to your AI coding assistant's model API for semantic extraction — Anthropic (Claude Code) or whichever provider your platform uses. Code files are processed locally via tree-sitter AST. All graph data lives in your local Relate store or your selected Neo4j instance (Aura or Docker). No telemetry, no usage tracking, no analytics.
 
 ---
 

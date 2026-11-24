@@ -1,4 +1,4 @@
-"""Neo4j connection management — credentials, driver lifecycle, schema setup."""
+"""Embedded Relate and Neo4j/Aura configuration, lifecycle, and schema setup."""
 from __future__ import annotations
 
 import json
@@ -11,8 +11,10 @@ from typing import Any
 _CONFIG_PATH = Path.home() / ".wisdom" / "config.json"
 _ENV_VAR = "WISDOM_NEO4J_PASSWORD"
 
-# Default DozerDB local config
+# New installations use embedded storage. Legacy configs with a URI stay remote.
 _DEFAULT_CONFIG: dict[str, Any] = {
+    "backend": "relate",
+    "graph_path": str(Path.home() / ".wisdom" / "graph.rl"),
     "neo4j_uri": "bolt://localhost:7687",
     "neo4j_user": "neo4j",
     "neo4j_password_env": _ENV_VAR,
@@ -24,9 +26,12 @@ _DEFAULT_CONFIG: dict[str, Any] = {
 def _load_config() -> dict[str, Any]:
     if _CONFIG_PATH.exists():
         try:
-            return json.loads(_CONFIG_PATH.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            pass
+            cfg = json.loads(_CONFIG_PATH.read_text(encoding="utf-8"))
+            if not isinstance(cfg, dict):
+                raise ValueError("configuration must be a JSON object")
+            return cfg
+        except (ValueError, OSError) as exc:
+            raise ValueError(f"Cannot read {_CONFIG_PATH}: {exc}. Repair the saved configuration before selecting storage.") from exc
     return dict(_DEFAULT_CONFIG)
 
 
@@ -42,6 +47,7 @@ def _save_config(cfg: dict[str, Any]) -> None:
 def save_connection(uri: str, user: str, password: str) -> None:
     """Save connection details. Password written to shell env file, not config."""
     cfg = _load_config()
+    cfg["backend"] = "neo4j"
     cfg["neo4j_uri"] = uri
     cfg["neo4j_user"] = user
     cfg["neo4j_password_env"] = _ENV_VAR
@@ -73,19 +79,57 @@ def _write_env_password(password: str) -> None:
     os.environ[_ENV_VAR] = password
 
 
-def get_driver():
-    """Return a connected Neo4j driver using saved config."""
+def backend_name(cfg: dict[str, Any]) -> str:
+    return cfg.get("backend", "neo4j" if cfg.get("neo4j_uri") else "relate")
+
+
+def save_embedded(path: str | None = None) -> None:
+    """Select a local store after checking that it can be opened."""
+    from .embedded import EmbeddedDriver
+    cfg = _load_config()
+    graph_path = str(Path(path or cfg.get("graph_path", _DEFAULT_CONFIG["graph_path"])).expanduser().resolve())
+    driver = EmbeddedDriver(graph_path)
+    try:
+        driver.verify_connectivity()
+        ensure_schema(driver)
+    finally:
+        driver.close()
+    cfg.update(backend="relate", graph_path=graph_path)
+    _save_config(cfg)
+    print(f"Embedded graph: {graph_path}")
+
+
+def get_driver(cfg: dict[str, Any] | None = None):
+    """Return embedded storage or the explicitly configured Neo4j/Aura driver."""
+    cfg = _load_config() if cfg is None else cfg
+    backend = backend_name(cfg)
+    if backend == "relate":
+        from .embedded import EmbeddedDriver
+        driver = EmbeddedDriver(cfg.get("graph_path", _DEFAULT_CONFIG["graph_path"]))
+        try:
+            driver.verify_connectivity()
+        except Exception as exc:
+            driver.close()
+            print(f"error: cannot open embedded graph: {exc}. Install relate-db==1.2.0; "
+                  "if the store is locked, close the other writer or use Aura.", file=sys.stderr)
+            sys.exit(1)
+        return driver
+    if backend not in {"neo4j", "docker"}:
+        raise ValueError(f"Unknown storage backend: {backend}")
     try:
         from neo4j import GraphDatabase
     except ImportError:
         print("error: neo4j driver not installed. Run: pip install wisdomgraph[neo4j]", file=sys.stderr)
         sys.exit(1)
 
-    cfg = _load_config()
     uri = cfg.get("neo4j_uri", _DEFAULT_CONFIG["neo4j_uri"])
     user = cfg.get("neo4j_user", _DEFAULT_CONFIG["neo4j_user"])
     env_var = cfg.get("neo4j_password_env", _ENV_VAR)
     password = os.environ.get(env_var, "")
+    if backend == "docker":
+        from .local import URI, USER, PASSWORD_PATH
+        uri, user = URI, USER
+        password = PASSWORD_PATH.read_text(encoding="utf-8").strip() if PASSWORD_PATH.exists() else ""
 
     if not password:
         print(f"error: {env_var} environment variable not set.", file=sys.stderr)
@@ -96,6 +140,7 @@ def get_driver():
     try:
         driver.verify_connectivity()
     except Exception as e:
+        driver.close()
         print(f"error: cannot connect to Neo4j at {uri}: {e}", file=sys.stderr)
         sys.exit(1)
     return driver

@@ -7,7 +7,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 
 echo "==> Installing dependencies"
-pip install pytest -q
+pip install pytest '.[mcp]' -q
 
 echo "==> Running tests"
 python -m pytest tests/ -q

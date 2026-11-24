@@ -14,12 +14,8 @@ This is the **npm shim** for wisdomGraph. All logic lives in the Python package.
 # 1. Install Python package
 pip install 'wisdomgraph[mcp]'
 
-# 2. Start Neo4j (local DozerDB)
-wisdom docker up
-wisdom connect bolt://localhost:7687 --user neo4j --password password
-
-# 3. Register MCP server in Claude Code
-wisdom mcp-install
+# 2. Create embedded storage and register MCP (no Docker)
+wisdom quickstart
 ```
 
 ## MCP config (via npx)
@@ -37,9 +33,10 @@ wisdom mcp-install
 
 ## What it does
 
-wisdomGraph gives Claude Code permanent, accumulative memory backed by Neo4j.
+wisdomGraph gives Claude Code permanent, accumulative memory backed by embedded Relate by Neo4j, with optional Neo4j Aura support.
 
-Five MCP tools:
+MCP tools include:
+- `wisdom_storage` — inspect or switch Relate, Neo4j/Aura, and managed Docker storage
 - `wisdom_ingest` — absorb files, directories, or URLs
 - `wisdom_remember` — store facts, decisions, insights explicitly
 - `wisdom_query` — read-only Cypher traversal

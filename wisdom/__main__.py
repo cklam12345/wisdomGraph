@@ -11,7 +11,7 @@ from pathlib import Path
 # Baked into the source so it identifies the code actually running, independent
 # of whatever distribution metadata happens to resolve on sys.path. Keep in sync
 # with pyproject.toml (guarded by test_code_version_matches_pyproject).
-_CODE_VERSION = "0.3.3"
+_CODE_VERSION = "0.3.4"
 
 try:
     from importlib.metadata import version as _pkg_version
@@ -303,7 +303,10 @@ def _run_quickstart() -> None:
     print("wisdomGraph quickstart")
     print()
 
-    if storage == "local":
+    if storage in {"local", "embedded", "relate"}:
+        from wisdom.connect import save_embedded
+        save_embedded(_get_arg("--path", None))
+    elif storage == "docker":
         from wisdom.local import up as local_up
         local_up(
             password=_get_arg("--password", None),
@@ -323,7 +326,7 @@ def _run_quickstart() -> None:
         from wisdom.connect import save_connection
         save_connection(uri, user, password)
     else:
-        print("error: unknown storage. Choose: local, aura, existing", file=sys.stderr)
+        print("error: unknown storage. Choose: local, aura, existing, docker", file=sys.stderr)
         sys.exit(1)
 
     _doctor(connect_only=True)
@@ -345,19 +348,27 @@ def _doctor(connect_only: bool = False) -> None:
     print("wisdomGraph doctor")
     print()
 
-    from wisdom.connect import _load_config
+    from wisdom.connect import _load_config, backend_name
     cfg = _load_config()
     print(f"Config: {Path.home() / '.wisdom' / 'config.json'}")
-    print(f"Neo4j URI: {cfg.get('neo4j_uri', 'not configured')}")
-    print(f"Neo4j user: {cfg.get('neo4j_user', 'not configured')}")
-    print(f"Password env: {cfg.get('neo4j_password_env', 'WISDOM_NEO4J_PASSWORD')}")
+    backend = backend_name(cfg)
+    print(f"Storage: {backend}")
+    if backend == "relate":
+        print(f"Graph: {cfg.get('graph_path', '~/.wisdom/graph.rl')}")
+    elif backend == "docker":
+        print("Managed Docker: bolt://localhost:7687")
+    else:
+        print(f"Neo4j URI: {cfg.get('neo4j_uri', 'not configured')}")
+        print(f"Neo4j user: {cfg.get('neo4j_user', 'not configured')}")
 
     try:
         from wisdom.connect import ensure_schema, get_driver, status as graph_status
         driver = get_driver()
-        ensure_schema(driver)
-        stats = graph_status(driver)
-        driver.close()
+        try:
+            ensure_schema(driver)
+            stats = graph_status(driver)
+        finally:
+            driver.close()
         print("Connection: ok")
         print(
             "Graph: "
@@ -375,9 +386,7 @@ def _doctor(connect_only: bool = False) -> None:
         return
 
     print()
-    from wisdom.local import docker_available, docker_daemon_available
-    print(f"Docker installed: {'yes' if docker_available() else 'no'}")
-    print(f"Docker daemon:    {'yes' if docker_daemon_available() else 'no'}")
+    print("Docker: optional (not needed for embedded storage or Aura)")
 
     hosts = _detect_hosts()
     print(f"MCP hosts found:  {', '.join(hosts) if hosts else 'none detected'}")
@@ -687,8 +696,9 @@ def _print_help() -> None:
     print("  --version                       print the running wisdomgraph version")
     print()
     print("Setup:")
-    print("  quickstart [--storage local|aura|existing] [--host claude|codex|all|none]")
-    print("  doctor                          check Neo4j, local backend, and MCP host readiness")
+    print("  quickstart [--storage local|aura|existing|docker] [--host claude|codex|all|none]")
+    print("             [--path PATH]        local defaults to embedded ~/.wisdom/graph.rl")
+    print("  doctor                          check graph storage and MCP host readiness")
     print("  install [--platform P]          copy skill (claude|windows|claw)")
     print("  connect <uri> --user U --pass P  save Neo4j connection")
     print("  local up [--engine neo4j|dozerdb] [--image IMAGE] [--password P]")
