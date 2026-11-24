@@ -36,7 +36,7 @@ def _keyword_fallback(session, query: str, limit: int) -> list[dict]:
     if not terms:
         return []
     # Build OR condition
-    conditions = " OR ".join(f"toLower(n.label) CONTAINS '{t}' OR toLower(n.content) CONTAINS '{t}'" for t in terms[:5])
+    conditions = "any(term IN $terms WHERE toLower(n.label) CONTAINS term OR toLower(n.content) CONTAINS term OR toLower(n.principle) CONTAINS term)"
     cypher = f"""
     MATCH (n)
     WHERE (n:Knowledge OR n:Experience OR n:Insight OR n:Wisdom)
@@ -45,9 +45,9 @@ def _keyword_fallback(session, query: str, limit: int) -> list[dict]:
            n.content AS content, n.principle AS principle,
            n.confidence AS confidence,
            1.0 AS score
-    LIMIT {limit}
+    LIMIT $limit
     """
-    result = session.run(cypher)
+    result = session.run(cypher, terms=terms[:5], limit=limit)
     return [dict(r) for r in result]
 
 

@@ -61,17 +61,24 @@ wisdomGraph 中每个节点都带有 `tier` 标签。图谱的拓扑结构**就�
 
 ---
 
+## 0.3.4 存储切换
+
+新增 `wisdom_storage` MCP 工具：`action: "status"` 查看配置；`action: "switch"` 配合 `backend: "relate"`、`"neo4j"`、`"aura"` 或 `"docker"` 切换存储。目标通过检查后才保存配置，下一次工具调用立即生效。远程密码通过 MCP 服务进程的环境变量提供，不要在聊天中发送密码。切换不会迁移或删除任何图谱。
+
 ## 安装
 
 **环境要求：** Python 3.10+ 以及以下之一：[Claude Code](https://claude.ai/code)、[OpenClaw](https://openclaw.ai)
 
-**加上以下之一：** [Neo4j Aura 免费版](https://neo4j.com/cloud/platform/aura-graph-database/)（云端，无需安装）或 [DozerDB](https://dozerdb.org)（本地 Docker，含 APOC）
+**无需 Docker、Java 或云账号。** 默认使用 Relate by Neo4j 嵌入式图数据库，数据保存在 `~/.wisdom/graph.rl`。仍支持 Neo4j Aura 和现有服务器。
 
 ```bash
-pip install wisdomgraph && wisdom install
+pip install 'wisdomgraph[mcp]'
+wisdom quickstart
 ```
 
-### 方案 A — Neo4j Aura（零基础设施，推荐个人用户）
+本地图谱必须能装入内存，同一时间只允许一个进程打开写入。多进程共享访问建议使用 Aura。已有连接配置保持有效；运行本地 quickstart 会切换存储，但不会自动迁移数据。
+
+### 可选方案 A — Neo4j Aura（云端共享访问）
 
 1. 在 [neo4j.com/cloud/aura](https://neo4j.com/cloud/aura) 注册免费账号
 2. 创建一个免费的 AuraDB 实例，复制连接 URI 和密码
@@ -83,7 +90,7 @@ wisdom connect bolt+s://xxxxxxxx.databases.neo4j.io --user neo4j --password <你
 
 免费额度：20 万节点，够用好几年。
 
-### 方案 B — DozerDB 本地 Docker（完全掌控，含 APOC）
+### 可选方案 B — DozerDB 本地 Docker（完全掌控，含 APOC）
 
 ```bash
 wisdom docker up        # 拉取 graphstack/dozerdb:5.26.3.0 并启动

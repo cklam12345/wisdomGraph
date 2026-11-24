@@ -7,20 +7,20 @@
     "source": "github",
     "subfolder": "npm"
   },
-  "version": "0.2.1",
+  "version": "0.3.4",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "wisdomgraph",
-      "version": "0.2.1",
+      "version": "0.3.4",
       "transport": {
         "type": "stdio"
       },
       "environmentVariables": [
         {
           "name": "WISDOM_NEO4J_PASSWORD",
-          "description": "Neo4j password for wisdomGraph. Set via `wisdom connect` or export directly.",
-          "isRequired": true,
+          "description": "Optional Neo4j/Aura password. Not needed for default embedded Relate storage.",
+          "isRequired": false,
           "format": "string",
           "isSecret": true
         }

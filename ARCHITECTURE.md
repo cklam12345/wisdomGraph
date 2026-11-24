@@ -1,3 +1,5 @@
+> Storage update: new installations use embedded Relate 1.2.0 through `wisdom/embedded.py`. `connect.get_driver()` selects Relate or the saved Neo4j/Aura connection. Each embedded session opens and closes its persistent store; the graph must fit in RAM and concurrent writer processes are refused. Docker sections below describe optional server deployments. Backend switching does not migrate data. Real-engine tests are in `tests/test_embedded.py`.
+
 # Architecture
 
 wisdomGraph is a Claude Code / OpenClaw skill backed by a Python library and a Neo4j graph database. The skill orchestrates the library. The library can be used standalone. The database is the memory.

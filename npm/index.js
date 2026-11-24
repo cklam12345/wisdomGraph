@@ -41,10 +41,8 @@ if (!checkWisdom()) {
       "Install it first:",
       "  pip install 'wisdomgraph[mcp]'",
       "",
-      "Then configure your Neo4j connection:",
-      "  wisdom docker up                          # local DozerDB",
-      "  wisdom connect bolt://localhost:7687 \\",
-      "    --user neo4j --password password",
+      "Then initialize embedded storage (no Docker):",
+      "  wisdom quickstart",
       "",
     ].join("\n")
   );

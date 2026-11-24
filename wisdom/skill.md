@@ -53,6 +53,7 @@ print(result.stdout or result.stderr)
 
 **If connection fails:**
 - Ask the user: "Do you want to use Neo4j Aura (cloud, free) or DozerDB local Docker?"
+- **Embedded (default)**: Run `python3 -m wisdom quickstart --host none`. No Docker or credentials; persistent local Relate graph.
 - **Aura**: "Create a free instance at https://neo4j.com/cloud/aura, then run: `wisdom connect <your-bolt-uri> --user neo4j --password <your-password>`"
 - **Docker**: Run `python3 -m wisdom docker up` then `python3 -m wisdom connect bolt://localhost:7687 --user neo4j --password password`
 
@@ -408,10 +409,14 @@ dist/
 
 ## Error handling
 
-**Neo4j connection refused**: Guide user through Aura signup or `wisdom docker up`
+**Neo4j connection refused**: Run `wisdom doctor`; use `wisdom quickstart --host none` for embedded storage, or reconnect to the configured Aura/server. Do not silently switch backends.
 
 **Empty extraction**: Warn "No extractable content found in <file>. Skipping." Continue with other files.
 
 **MERGE conflict**: MERGE semantics are idempotent — re-running is safe. Higher-confidence nodes win on conflict.
 
 **reflect() produces no Wisdom**: Tell the user "Not enough accumulated experience yet. Absorb more projects and run `/wisdom reflect` again after 2-3 more runs."
+
+## Storage selection (0.3.4)
+
+Relate is the default for new installations. Use `wisdom_storage` with `action: "status"` to inspect the selected backend. When the user requests a switch, use `action: "switch"` and `backend: "relate"`, `"neo4j"`, `"aura"`, or `"docker"`. Docker may start/pull a managed container. Remote credentials must come from the MCP server environment via `password_env`; never request passwords in chat. Switching preserves both stores and does not migrate data or stop containers. Existing saved remote connections are honored.
