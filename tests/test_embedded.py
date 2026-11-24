@@ -64,6 +64,13 @@ def test_reflection_promotes_real_graph(driver):
     assert connect.status(driver)['Wisdom'] == 1
 
 
+def test_missing_node_returns_none_instead_of_cursor_error(driver):
+    from wisdom.traverse import explain_node
+    with driver.session() as session:
+        assert session.run("MATCH (n:Knowledge {id: 'missing'}) RETURN n").single() is None
+        assert 'error' in explain_node(session, 'missing')
+
+
 def test_exception_releases_store(driver):
     with pytest.raises(ValueError):
         with driver.session() as session:

@@ -33,28 +33,24 @@ def _make_driver(session=None):
 
 # ── Import guards ──────────────────────────────────────────────────────────────
 
-def test_mcp_importable_without_mcp_sdk(monkeypatch):
-    """wisdom.mcp must be importable even without the mcp SDK installed.
-    run_mcp_server() should raise SystemExit, but import must not."""
-    import sys
-    import importlib
-
-    # Simulate absent mcp SDK
-    monkeypatch.setitem(sys.modules, "mcp", None)
-    monkeypatch.setitem(sys.modules, "mcp.server", None)
-    monkeypatch.setitem(sys.modules, "mcp.server.stdio", None)
-    monkeypatch.setitem(sys.modules, "mcp.types", None)
-
-    # Remove cached module so it re-imports
-    monkeypatch.delitem(sys.modules, "wisdom.mcp", raising=False)
-
-    # Module must import cleanly
-    mcp_mod = importlib.import_module("wisdom.mcp")
-    assert not mcp_mod._MCP_AVAILABLE
-
-    # run_mcp_server must exit gracefully
-    with pytest.raises(SystemExit):
-        mcp_mod.run_mcp_server()
+def test_mcp_importable_without_mcp_sdk():
+    """Keep the simulated missing SDK isolated from the parent module cache."""
+    import subprocess
+    script = """
+import sys
+for name in ('mcp', 'mcp.server', 'mcp.server.stdio', 'mcp.types'):
+    sys.modules[name] = None
+from wisdom import mcp
+assert not mcp._MCP_AVAILABLE
+try:
+    mcp.run_mcp_server()
+except SystemExit as exc:
+    assert exc.code == 1
+else:
+    raise AssertionError('Expected missing-SDK error')
+"""
+    result = subprocess.run([sys.executable, '-c', script], capture_output=True, text=True, timeout=15)
+    assert result.returncode == 0, result.stderr
 
 
 # ── _handle_remember ─────────────────────────────────────────────────────────

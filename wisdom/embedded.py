@@ -8,13 +8,32 @@ from __future__ import annotations
 from pathlib import Path
 
 
+class EmbeddedResult:
+    """Adapt the result behavior relied on by WisdomGraph's Neo4j callers."""
+    def __init__(self, cursor):
+        self.cursor = cursor
+
+    def __iter__(self):
+        return iter(self.cursor)
+
+    def __getattr__(self, name):
+        return getattr(self.cursor, name)
+
+    def single(self):
+        # Neo4j's non-strict single() returns None for a missing node;
+        # Relate's cursor raises on an empty result instead.
+        if self.cursor.peek() is None:
+            return None
+        return self.cursor.single()
+
+
 class EmbeddedSession:
     def __init__(self, path: str):
         import relate
         self.connection = relate.connect(path)
 
     def run(self, statement: str, parameters: dict | None = None, **kwargs):
-        return self.connection.execute(statement, {**(parameters or {}), **kwargs})
+        return EmbeddedResult(self.connection.execute(statement, {**(parameters or {}), **kwargs}))
 
     def __enter__(self):
         return self
